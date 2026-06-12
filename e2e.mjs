@@ -937,8 +937,8 @@ ok('審査員の合議(不一致は沈黙=能動誤審ゼロ)');
 // ---- 57. ABCモード(英数キーで刻印どおりのQWERTY) ----
 {
   down('Enter');
-  down('F11'); // F11=ABCモード入り(英数がOSに取られる環境向けの本命)
-  assert(el('mode').textContent === 'A', 'ABCモードのバッジ(F11)');
+  down('BracketLeft'); // @(Pの隣)=ABCモード入り(英数=OS切替・F11=デスクトップ表示に取られる)
+  assert(el('mode').textContent === 'A', 'ABCモードのバッジ(@)');
   down('KeyH', { key: 'h' }); down('KeyT', { key: 't' }); down('KeyT', { key: 't' }); down('KeyP', { key: 'p' });
   down('Digit1', { key: '1' }); down('Space', { key: ' ' }); down('KeyA', { key: 'A', shiftKey: true });
   assert(plain().endsWith('http1 A'), `刻印どおり半角で入る: ${plain().slice(-8)}`);
