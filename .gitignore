@@ -4,3 +4,4 @@ nohup.out
 # サイズ都合(GitHub 100MB制限)。README の手順で各自取得
 llm/
 .DS_Store
+*.gguf

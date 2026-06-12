@@ -140,7 +140,7 @@ async function registerWord(surf, yomi, at) {
   try { // 品詞はLLMが文脈から特定(失敗しても登録自体は成立)
     const p0 = at >= 0 ? at : text.indexOf(surf);
     const ctx = text.slice(Math.max(0, p0 - 40), Math.max(0, p0) + surf.length + 40);
-    const r = await fetch(LLM_URL + '/v1/chat/completions', {
+    const r = await fetch(smartUrl() + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -533,7 +533,7 @@ async function voicePipeline(raw, sha) {
   if (calib) { calibFeed(raw, sha); return; } // 声合わせ中: 挿入せず(聞き取り→正解)ペアを採取
   let kana = null;
   try {
-    const r = await fetch(LLM_URL + '/v1/chat/completions', {
+    const r = await fetch(smartUrl() + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -897,8 +897,10 @@ const kataToHira = (s) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.c
 
 // ---- ローカルLLM審査員(同梱 llama-server / TinySwallow-1.5B) ----
 // 役割は「候補の番号を言う」だけ。文字は一切生成しない=公理0(内容を書かない)は無傷
-const LLM_URL = 'http://127.0.0.1:18434';
-let llmReady = false;
+const LLM_URL = 'http://127.0.0.1:18434';   // 審査員A(軽量・高速)
+const LLM2_URL = 'http://127.0.0.1:18437';  // 審査員B(賢い方。採取/品詞/かな化/棚卸しもこちら)
+let llmReady = false, llm2Ready = false;
+const smartUrl = () => (llm2Ready ? LLM2_URL : LLM_URL); // 重い仕事は賢い方が居れば賢い方へ
 let llmOn = localStorage.getItem('ne:llm') !== 'off';
 let llmSeq = 0;
 function updateLlmBtn() {
@@ -907,27 +909,45 @@ function updateLlmBtn() {
 }
 async function llmInit() {
   const tries = ipc ? 60 : 3; // Electron ならモデルロードを待つ
-  for (let i = 0; i < tries && !llmReady; i++) {
+  for (let i = 0; i < tries && !(llmReady && llm2Ready); i++) {
     try {
-      const r = await fetch(LLM_URL + '/health', { signal: AbortSignal.timeout(1500) });
-      if ((await r.json()).status === 'ok') llmReady = true;
+      if (!llmReady) {
+        const r = await fetch(LLM_URL + '/health', { signal: AbortSignal.timeout(1500) });
+        if ((await r.json()).status === 'ok') llmReady = true;
+      }
+      if (!llm2Ready) {
+        const r2 = await fetch(LLM2_URL + '/health', { signal: AbortSignal.timeout(1500) });
+        if ((await r2.json()).status === 'ok') llm2Ready = true;
+      }
     } catch {}
-    if (!llmReady) await new Promise((r2) => setTimeout(r2, 1000));
+    if (llmReady && i >= 2 && !ipc) break; // ブラウザ/e2e は B 無しでも先へ
+    if (!(llmReady && llm2Ready)) await new Promise((r2) => setTimeout(r2, 1000));
   }
   updateLlmBtn();
-  if (llmReady) status('審査員(ローカルLLM)が起動しました');
+  if (llmReady && llm2Ready) status('審査員が起動しました(2モデル合議)');
+  else if (llmReady) status('審査員(ローカルLLM)が起動しました');
 }
 const ctxOf = (upto) =>
   text.slice(0, upto).split(/(?<=[。！？\n])/).filter((x) => x.trim()).slice(-2).join('').slice(-120);
-async function llmAsk(list, context) {
+async function llmAskOne(url, list, context) {
   const prompt = `日本語のかな漢字変換の候補審査です。文脈の続きとして自然な候補の番号だけを、自然な順にカンマ区切りで挙げてください。不自然な候補は含めないでください。\n文脈:「${context}」\n候補:\n${list.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n番号:`;
-  const r = await fetch(LLM_URL + '/v1/chat/completions', {
+  const r = await fetch(url + '/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 24 }),
+    body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 24, stop: ['\n'] }),
     signal: AbortSignal.timeout(8000),
   });
   return ((await r.json()).choices[0].message.content.match(/\d+/g) || []).map(Number);
+}
+async function llmAsk(list, context) {
+  // 合議: 2人の審査員の第一候補が一致した時だけ動く。不一致なら沈黙(=辞書+文脈学習の順のまま)。
+  // 「LLMは間違うくらいなら黙る」——能動的な誤審がゼロになる(2026-06-13 実測で確認済み)
+  if (!llm2Ready) return llmAskOne(LLM_URL, list, context); // 単独運転(B不在)は従来動作
+  const [a, b] = await Promise.allSettled([llmAskOne(LLM_URL, list, context), llmAskOne(LLM2_URL, list, context)]);
+  if (a.status !== 'fulfilled') return b.status === 'fulfilled' ? b.value : [];
+  if (b.status !== 'fulfilled') return a.value;
+  if (!a.value.length || !b.value.length) return [];
+  return a.value[0] === b.value[0] ? b.value : []; // 一致→賢い方の並びを採用、不一致→沈黙
 }
 // 先読みキャッシュ: ひらがな入力中に裏で審査しておき、Space の瞬間に同期適用する
 const specCache = new Map(); // key(読み+文脈+候補列) -> nums
@@ -1011,7 +1031,7 @@ async function llmHarvest() {
   localStorage.setItem('ne:lastScanLen', String(lastScanLen));
   const prompt = `以下の小説本文から固有名詞(人名・地名・組織名・技名など)と珍しい語だけを抜き出し、1行に「表記,読み(ひらがな)」の形式で列挙してください。説明や一般語は不要です。\n本文:「${chunk}」`;
   try {
-    const r = await fetch(LLM_URL + '/v1/chat/completions', {
+    const r = await fetch(smartUrl() + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 200 }),
@@ -1054,7 +1074,7 @@ async function llmCurate(force) {
   const batch = entries.slice(0, 40);
   const prompt = `小説用の固有名詞辞書の棚卸しです。以下の項目のうち、明らかな誤り(読みと表記の不一致・意味のない断片・固有名詞でない一般語)の番号だけをカンマ区切りで挙げてください。問題なければ「なし」。\n${batch.map(([y, s2], i) => `${i + 1}. ${s2}(読み: ${y})`).join('\n')}\n番号:`;
   try {
-    const r = await fetch(LLM_URL + '/v1/chat/completions', {
+    const r = await fetch(smartUrl() + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 60 }),

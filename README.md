@@ -41,7 +41,7 @@ npm start
 3. **自分のコーパス**(dict.json — 過去作品から生成)
 4. **基底辞書**(basedict.json 190万読み = mozc + IPADIC活用展開 + SKK系 + mozc-UT穴埋め層(jawiki/人名/地名/sudachi、新規読みのみ1候補))
 5. ラティス(最小コスト経路)が複数語の同時変換と分割を決める
-6. **ローカルLLM審査員**(同梱 TinySwallow-1.5B)。役割は**変換候補のフィルタ**——
+6. **ローカルLLM審査員**(同梱2モデルの**合議**: TinySwallow-1.5B + Qwen3-4B)。両者の第一候補が**一致した時だけ**並びを採用、不一致なら沈黙して辞書+文脈学習の順を保つ(実測で能動的誤審ゼロ)。採取・品詞・棚卸しは賢い方(Qwen3)が担当。役割は**変換候補のフィルタ**——
    文脈上あり得ない候補の除去と並べ替え**のみ**。出力は既存候補の番号に拘束され、
    本文の文字を生成・変更する経路は存在しない。**人間の打鍵を変更する動作は一切行わない**。
    ユーザが先に候補送りしていれば黙る。「証」ボタンの証明書にもこの保証が明記される
@@ -62,7 +62,7 @@ node tools/build-drills.js > drills.json        # 練習教材
 node tools/layout-gen.js                        # 配列改訂(anchor)。--fresh は白紙導出
 ```
 
-LLM(`llm/`、リポジトリ外): llama.cpp の llama-server(mac/win)+ TinySwallow-1.5B GGUF を配置。
+LLM(`llm/`、リポジトリ外): llama.cpp の llama-server(mac/win)+ model.gguf(TinySwallow-1.5B)+ model2.gguf(Qwen3-4B Q4_K_M、合議の相方)を配置。
 パッケージは electron-packager に `--asar.unpack="**/llm/**"` 必須。
 
 ## テスト(e2e-snow-ball)

@@ -6,8 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
-// 同梱ローカルLLM(llama-server + TinySwallow-1.5B)。変換候補の審査員専用
-let llmProc = null;
+// 同梱ローカルLLM。審査は2モデルの合議(TinySwallow-1.5B + Qwen3-4B)、採取系は賢い方(model2)
+let llmProc = null, llmProc2 = null;
 function startLlm() {
   const base = app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : __dirname;
   const dir = path.join(base, 'llm');
@@ -18,6 +18,10 @@ function startLlm() {
   if (!fs.existsSync(bin) || !fs.existsSync(model)) return;
   llmProc = spawn(bin, ['-m', model, '--port', '18434', '-c', '1024', '--log-disable'], { stdio: 'ignore' });
   llmProc.on('error', () => (llmProc = null));
+  const model2 = path.join(dir, 'model2.gguf');
+  if (!fs.existsSync(model2)) return;
+  llmProc2 = spawn(bin, ['-m', model2, '--port', '18437', '-c', '1024', '--log-disable'], { stdio: 'ignore' });
+  llmProc2.on('error', () => (llmProc2 = null));
 }
 // 同梱 whisper(音声入力)。声は証拠としても保存される
 let whisperProc = null;
@@ -158,4 +162,4 @@ app.whenReady().then(() => {
   });
 });
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { try { llmProc?.kill(); } catch {} try { whisperProc?.kill(); } catch {} });
+app.on('will-quit', () => { try { llmProc?.kill(); } catch {} try { llmProc2?.kill(); } catch {} try { whisperProc?.kill(); } catch {} });

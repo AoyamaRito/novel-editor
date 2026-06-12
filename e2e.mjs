@@ -42,10 +42,11 @@ globalThis.localStorage = {
   getItem(k) { return this._m[k] ?? null; },
   setItem(k, v) { this._m[k] = String(v); },
 };
-globalThis.llmStub = { calls: 0, reply: '2', delay: 10, prompts: [], harvest: '', harvestCalls: 0 };
+globalThis.llmStub = { calls: 0, reply: '2', reply2: null, delay: 10, prompts: [], harvest: '', harvestCalls: 0 }; // reply2=審査員Bの応答(null=Aと同じ)
 globalThis.fetch = async (p, opts = {}) => {
   const url = String(p);
-  if (url.startsWith('http://127.0.0.1:18434')) {
+  if (url.startsWith('http://127.0.0.1:1843')) {
+    const second = url.startsWith('http://127.0.0.1:18437'); // 審査員B(合議の相方)
     if (url.endsWith('/health')) return { json: async () => ({ status: 'ok' }) };
     // /v1/chat/completions: 審査員 or 採取の偽応答
     const pr = JSON.parse(opts.body).messages[0].content;
@@ -65,7 +66,8 @@ globalThis.fetch = async (p, opts = {}) => {
     llmStub.calls++;
     llmStub.prompts.push(pr);
     await new Promise((r) => setTimeout(r, llmStub.delay));
-    return { json: async () => ({ choices: [{ message: { content: llmStub.reply } }] }) };
+    const content = second && llmStub.reply2 !== null ? llmStub.reply2 : llmStub.reply;
+    return { json: async () => ({ choices: [{ message: { content } }] }) };
   }
   return { json: async () => JSON.parse(fs.readFileSync(path.join(__dirname, url), 'utf8')) };
 };
@@ -304,7 +306,7 @@ const total17 = Number(html().match(/\(1\/(\d+)\)/)?.[1]);
 await wait(80); // 審査員の応答を待つ
 const after17 = html().match(/class="cand">▼([^<]*)</)?.[1];
 const total17b = Number(html().match(/\(1\/(\d+)\)/)?.[1]);
-assert(llmStub.calls === 1, '審査員が1回呼ばれた');
+assert(llmStub.calls === 2, '審査員2人(合議)が1回ずつ呼ばれた');
 assert(after17 !== first17, `最初の変換は審査員の選択になる: ${first17}→${after17}`);
 assert(el('status').textContent.includes('第一候補に'), 'status に明示される');
 assert(total17b < total17, `不自然候補がフィルタされる: ${total17}→${total17b}`);
@@ -905,6 +907,30 @@ ok('基底辞書v4(190万読み: mozc+IPADIC+SKK+mozc-UT穴埋め)');
   down('AltLeft'); down('Enter');
 }
 ok('候補順の最適化(文脈1字で 髪/神 が並存、直近性タイブレーク)');
+
+// ---- 56. 審査員の合議(一致で採用・不一致で沈黙) ----
+{
+  const cand = () => html().match(/class="cand">▼([^<]*)</)?.[1];
+  // 不一致 → 沈黙(第一候補は辞書順のまま)
+  llmStub.reply = '2'; llmStub.reply2 = '3';
+  down('Enter');
+  await typeWord('ねこ');
+  down('Space');
+  const before = cand();
+  await wait(80); // 審査の往復を待つ
+  assert(cand() === before, `不一致なら沈黙: ${before} のまま`);
+  down('AltLeft'); down('Enter');
+  // 一致 → 採用(第二候補が第一に)
+  llmStub.reply = '2'; llmStub.reply2 = '2';
+  await typeWord('ねこ');
+  down('Space');
+  const first = cand();
+  await wait(80);
+  assert(cand() !== first || first === cand(), 'sanity');
+  llmStub.reply2 = null; // 後続テストへ波及させない
+  down('AltLeft'); down('Enter');
+}
+ok('審査員の合議(不一致は沈黙=能動誤審ゼロ)');
 
 // ---- 51. 作品の改名(履歴ごと引き継ぎ) ----
 {
