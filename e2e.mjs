@@ -582,12 +582,65 @@ const synth = [
   mkLine({ t: 3000, e: 'state', sha: sha('x'), len: 8 }),
 ].join('\n');
 const rep37 = globalThis.__neCert(synth, '', hd);
-assert(rep37.includes('✓ 全行の連鎖一致'), 'チェーン整合の検証が通る');
+assert(rep37.includes('✓ 末尾からの連鎖一致'), 'チェーン整合の検証が通る(アンカー無し時の文言)');
 assert(rep37.includes('貼り付け: 1件 / 合計 8字'), '外部由来が開示される');
 assert(rep37.includes('人間の打鍵を変更する動作は一切行わない'), 'LLM=フィルタ専任の保証が明記される');
 const tampered = synth.replace('KeyA', 'KeyB');
 assert(globalThis.__neCert(tampered, '', hd).includes('✗'), '改ざんが検出される');
 ok('証明書発行(検証・開示・保証明記・改ざん検出)');
+
+// ---- 38. Undo/Redo ----
+down('Enter'); down('Enter');
+await wait(1250); // snapスロットルを越える
+const base38 = plain();
+await typeWord('かきく');
+down('Enter'); // かな確定
+down('KeyZ', { metaKey: true });
+assert(plain() === base38, `Undoでバースト前へ: ${JSON.stringify(plain().slice(-4))}`);
+down('KeyZ', { metaKey: true, shiftKey: true });
+assert(plain().endsWith('　かきく'), 'Redoで復元');
+ok('Undo/Redo(Cmd+Z / Cmd+Shift+Z)');
+
+// ---- 39. 複数原稿 ----
+const txt39 = plain();
+globalThis.__neDoc('novel:test2');
+assert(plain() === '', '新規作品は空で始まる');
+await typeWord('にさくめ');
+down('Enter');
+globalThis.__neDoc('novel:manuscript');
+assert(plain() === txt39, '元の作品が無傷で戻る');
+globalThis.__neDoc('novel:test2');
+assert(plain().includes('にさくめ'), '二作目の内容も保持');
+globalThis.__neDoc('novel:manuscript');
+ok('複数原稿の切替(内容が独立保持)');
+
+// ---- 40. 検索+縦書きページスライダー ----
+const pos40 = globalThis.__neFind('髪');
+assert(pos40 >= 0, '検索でヒットしカーソルが飛ぶ');
+globalThis.__neMove(plain().length);
+el('tate').onclick();
+assert(html().includes('id="pgbar"'), '縦書きにページスライダー');
+el('tate').onclick();
+ok('検索(Cmd+F/G)+ページスライダー');
+
+// ---- 41. 証明書: アンカー照合(前方切り詰め検出) ----
+{
+  let h2 = '0';
+  const heads = [];
+  const mk = (o) => { const b = JSON.stringify({ ...o, p: h2 }); h2 = globalThis.__neSha(h2 + b); heads.push(h2); return b; };
+  const l1 = mk({ t: 1, e: 'k', c: 'KeyA' });
+  const l2 = mk({ t: 2, e: 'k', c: 'KeyB' });
+  const l3 = mk({ t: 3, e: 'k', c: 'KeyC' });
+  const anc = JSON.stringify({ at: '2026-06-12T00:00:00Z', logHash: heads[0], sha256: 'x', proofs: [{}] });
+  const full = [l1, l2, l3].join('\n');
+  const repFull = globalThis.__neCert(full, anc, h2);
+  assert(repFull.includes('アンカー照合: 1/1'), 'フルログでアンカー再現');
+  assert(repFull.includes('最古のアンカー時点まで完全性'), '文言が格上げされる');
+  const truncated = [l2, l3].join('\n');
+  const repTrunc = globalThis.__neCert(truncated, anc, h2);
+  assert(repTrunc.includes('アンカー照合: 0/1') && repTrunc.includes('前方欠落の可能性'), '前方切り詰めが検出される');
+}
+ok('証明書: 前方切り詰め検出(アンカー照合)');
 
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

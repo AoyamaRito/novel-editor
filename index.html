@@ -21,6 +21,8 @@
   .ghost { color: #a9c4ef; }
   .closers { color: #b0a698; }
   .nl { color: #cdc5b4; font-size: 11px; user-select: none; }
+  .tatewrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  #pgbar { width: 58%; accent-color: var(--accent); direction: rtl; }
   #curline { position: absolute; left: 0; right: 0; height: 2.1em; background: rgba(47,111,79,.07); pointer-events: none; z-index: 0; }
   .vl.cur-line { background: rgba(47,111,79,.09); border-right: 2.5px solid rgba(47,111,79,.5); margin-right: -1.5px; }
   .candinfo { font-size: 11px; color: #999; font-family: sans-serif; }
@@ -89,6 +91,8 @@
 <body>
   <header>
     <span class="title">novel-editor</span>
+    <select id="doc" title="作品の切替"></select>
+    <button id="newdoc" title="新しい作品を作る">＋</button>
     <span id="mode">─</span>
     <button id="tate" title="縦書き(電撃文庫: 42字×17行・見開き)">横</button>
     <button id="chartbtn" title="キー配列の表示/非表示">盤</button>
