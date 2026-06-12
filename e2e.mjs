@@ -860,6 +860,17 @@ ok('作品ファイル(本文+sha+チェーン錨の同居形式)');
 }
 ok('機能語連鎖(だ・よ・ね等)が漢字に乗っ取られない');
 
+// ---- 54. 基底辞書 v4(mozc-UT 穴埋め層) ----
+{
+  down('Enter');
+  await typeWord('さきゅばす');
+  down('Space');
+  const c0 = html().match(/class="cand">▼([^<]*)</)?.[1];
+  assert(c0 === 'サキュバス', `UT層の語が引ける: ${c0}`);
+  down('AltLeft'); down('Enter');
+}
+ok('基底辞書v4(190万読み: mozc+IPADIC+SKK+mozc-UT穴埋め)');
+
 // ---- 51. 作品の改名(履歴ごと引き継ぎ) ----
 {
   globalThis.window = { prompt: () => 'はじまりの物語', confirm: () => true };

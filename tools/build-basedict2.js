@@ -92,6 +92,25 @@ async function main() {
     console.error(`SKK-JISYO.${name} done`);
   }
 
+  // ---- mozc-UT 層(jawiki/人名/地名/sudachi。受け皿: SKKと同格の底層) ----
+  // 形式は mozc と同じ TSV。表記は漢字/かなを含むものだけ(英字のみは小説で使わない)
+  for (const name of ['mozcdic-ut-jawiki', 'mozcdic-ut-personal-names', 'mozcdic-ut-place-names', 'mozcdic-ut-sudachidict']) {
+    const f = path.join(__dirname, '..', 'data', `${name}.txt`);
+    if (!fs.existsSync(f)) { console.error(`${name}: なし(スキップ)`); continue; }
+    let added = 0;
+    for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+      const c = line.split('	');
+      if (c.length < 5) continue;
+      const yomi = c[0], surf = c[4];
+      if (!/[一-鿿々ァ-ヶ]/.test(surf)) continue;
+      if (yomi.length > 10) continue; // 文・作品名級の長尺読みは打たない(ラティス窓も12字)
+      if (pool[yomi]) continue; // 穴埋め専任: 既存読みの候補は太らせない
+      put(yomi, surf, clamp(1300 + (Number(c[3]) - 8000) / 20, 1300, 1450));
+      added++;
+    }
+    console.error(`${name} done: +${added}`);
+  }
+
   // ---- 集約: 同表記は最小コスト、コスト昇順で cap ----
   const dict = {};
   for (const [yomi, arr] of Object.entries(pool)) {
