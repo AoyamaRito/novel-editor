@@ -5,8 +5,8 @@ import { Graph, Block } from './vendor/yume-lite-core.js'; // yume-lite core を
 
 // ---- 設定(キーが反応しないときはここを実際の code に合わせる。最下部に押した code が出る) ----
 // かなキーは macOS が入力ソース切替に横取りすることがあるため、右Cmd を確実な代替にしている
-const HENKAN_CODES = ['Space', 'Digit7', 'Lang1', 'KanaMode', 'HiraganaKatakana', 'MetaRight']; // 変換/候補送り(Space/7)
-const KATAKANA_CODES = ['Digit8']; // カタカナ変換(8)。F7 は数字の7(F1〜F10=数字)
+const HENKAN_CODES = ['Space', 'Lang1', 'KanaMode', 'HiraganaKatakana', 'MetaRight']; // 変換/候補送り(Space)
+const HIRAKU_CODES = ['Quote']; // ：=表記を開く(すべてカタカナ⇄すべてひらがな。候補表示中からも戻せる)。数字キー4578はがだじで
 const CANCEL_CODES = ['Lang2', 'NonConvert', 'Convert', 'AltLeft', 'AltRight']; // ▽破棄/キャンセル
 
 // ---- 物理キー(JIS 3段×10列) ----
@@ -16,6 +16,7 @@ ROWS.join('').split('').forEach((ch) => {
   CODE_OF[ch] =
     ch === ';' ? 'Semicolon' : ch === ',' ? 'Comma' : ch === '.' ? 'Period' : ch === '/' ? 'Slash' : 'Key' + ch;
 });
+'0123456789'.split('').forEach((d) => (CODE_OF[d] = 'Digit' + d)); // 数字段(4578=最頻濁音の単打専用席)
 
 // ---- ゛変形キー: base→濁→(半濁/小書き)→base の循環 ----
 const CYCLE = {};
@@ -1513,28 +1514,32 @@ function onKeydown(e) {
     out('１２３４５６７８９０'[Number(fnDigit[1]) - 1]);
     render(); return;
   }
-  if (KATAKANA_CODES.includes(code)) { // カタカナ変換(8)。候補表示中はカタカナ候補へ直行、通常時は未確定かな列を即カタカナ確定
+  if (HIRAKU_CODES.includes(code)) { // ：=表記を開く。押すたび すべてカタカナ⇄すべてひらがな。候補表示中からも戻せる
     e.preventDefault();
+    if (e.repeat) return;
     if (mode === 'CAND') {
-      const i = cands.indexOf(hiraToKata(reading));
-      if (i >= 0) candIdx = i;
-      render(); return;
+      const kata = hiraToKata(reading);
+      if (cands.length === 2 && cands[0] === kata && cands[1] === reading) {
+        candIdx = (candIdx + 1) % 2; // 2押し目以降は カタカナ⇄ひらがな の循環
+      } else {
+        cands = [kata, reading]; candPaths = null; candIdx = 0; // 漢字候補から表記を開いて戻す
+        logEvt('conv', { y: reading, c0: kata, open: 1 });
+      }
+      snd.cycle(); render(); return;
     }
     if (mode !== 'NONE') return;
     const src = tut ? tut.buf : text;
     const m = (tut ? src : src.slice(committedTo, cursor)).match(/[ぁ-んー]+$/);
     if (!m) return;
     const run = m[0], kata = hiraToKata(run);
-    if (tut) { tut.buf = src.slice(0, src.length - run.length) + kata; tutCheck(); }
-    else {
-      const start = cursor - run.length;
-      text = text.slice(0, start) + kata + text.slice(cursor);
-      cursor = start + kata.length;
-      lastConv = { pos: start, len: kata.length, until: Date.now() + 1200 };
-      clearTimeout(lastConvTimer);
-      lastConvTimer = setTimeout(render, 1250);
-      committedTo = cursor;
-    }
+    if (tut) { tut.buf = src.slice(0, src.length - run.length) + kata; tutCheck(); render(); return; }
+    // 通常時はカタカナ→ひらがなの2候補でCANDへ(もう一押しで戻せる。決定は次のかな/Enter)
+    text = text.slice(0, cursor - run.length) + text.slice(cursor);
+    cursor -= run.length;
+    committedTo = Math.min(committedTo, cursor);
+    reading = run; convRestore = run;
+    cands = [kata, run]; candPaths = null; candIdx = 0; mode = 'CAND';
+    logEvt('conv', { y: run, c0: kata, open: 1 });
     render(); return;
   }
   if (code === 'Tab') { // 予測をひらがなのまま受け入れる(青字のままなので続けて変換も可)
@@ -1813,7 +1818,14 @@ function buildCharts(layout) {
     const g = gyoOf(ch);
     return g >= 0 ? `${base} gyo-${g}` : base; // 行ごとに緑系の別色
   };
-  let html = '';
+  let html = '<div class="krow numrow">';
+  for (const label of '1234567890') {
+    const ch = charAt(layout.slots, label);
+    html += ch
+      ? `<div class="key" data-code="Digit${label}"><span class="${cls(ch, 'kana')}">${ch}</span><span class="label">${label}</span></div>`
+      : '<div class="key spacer"></div>';
+  }
+  html += '</div>';
   for (let r = 0; r < 3; r++) {
     html += '<div class="krow">';
     if (r === 2) html += '<div class="key shiftkey" data-code="ShiftLeft"><span class="kana">⇧</span><span class="label">Shift</span></div>';

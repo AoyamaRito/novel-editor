@@ -8,7 +8,10 @@ const freq = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'out', 'freq.
 // ---- 文字集合(60スロットちょうど) ----
 const SEION =
   'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん';
-const DIRECT = [...SEION, 'っ', 'ゃ', 'ゅ', 'ょ', 'ー', '。', '、', '「', '」', '…', '！', '？', '゛', '　'];
+const DIRECT = [...SEION, 'っ', 'ゃ', 'ゅ', 'ょ', 'ー', '。', '、', '「', 'が', 'だ', 'じ', 'で', '…', '！', '？', '゛', '　']; // 」追放+最頻濁音4種(がだじで)を数字段ショートカットに
+// がだじで は数字段4578の中に限定。席順は頻度→コストでシードし、群内だけ山登りに任せる
+const PIN_CHARS = new Set(['が', 'だ', 'じ', 'で']);
+const PIN_KEYS = ['4', '5', '7', '8'];
 // 変形キー゛で後置合成する文字 → 親
 const COMPOSE = {
   が: 'か', ぎ: 'き', ぐ: 'く', げ: 'け', ご: 'こ',
@@ -41,7 +44,15 @@ for (let r = 0; r < 3; r++)
         cost: COST[r][c] + (chord ? CHORD_PENALTY : 0),
         finger: FINGER[c], hand: c < 5 ? 0 : 1,
       });
-// KEYS.length = 60
+// 数字段の単打専用キー(本人実測: 4,5,7,8は離れているが打ちやすい。シフトなし限定)
+const NUMKEYS = [
+  { id: '4', col: 3, cost: 2.8, finger: 3, hand: 0 },
+  { id: '5', col: 4, cost: 3.0, finger: 3, hand: 0 },
+  { id: '7', col: 6, cost: 2.8, finger: 6, hand: 1 },
+  { id: '8', col: 7, cost: 2.7, finger: 7, hand: 1 },
+];
+for (const k of NUMKEYS) KEYS.push({ id: k.id, row: -1, col: k.col, chord: false, cost: k.cost, finger: k.finger, hand: k.hand });
+// KEYS.length = 64
 
 // ---- 打鍵単位の uni/bigram に変換(濁音→親+゛ 展開) ----
 const expand = (ch) => (COMPOSE[ch] ? [COMPOSE[ch], '゛'] : [ch]);
@@ -139,6 +150,7 @@ function climb(initial, seedVal, iters) {
     const a = chars[(rand() * chars.length) | 0];
     const b = chars[(rand() * chars.length) | 0];
     if (a === b) continue;
+    if (PIN_CHARS.has(a) !== PIN_CHARS.has(b)) continue; // 数字段組は群内でのみ入替可
     const before = contrib(a) + contrib(b) - cross(a, b);
     [cur[a], cur[b]] = [cur[b], cur[a]];
     const after = contrib(a) + contrib(b) - cross(a, b);
@@ -150,6 +162,23 @@ function climb(initial, seedVal, iters) {
 
 // 初期値: 既存 layout.json があればそれをアンカー(増分改善のみ → 配列の連続性を守る)。
 // --fresh でマルチリスタート探索(配列を白紙から導出し直す。学習済み配列は捨てる覚悟で)。
+function seedPins(assign) {
+  const idOf = Object.fromEntries(KEYS.map((k, i) => [k.id, i]));
+  const keysByCost = PIN_KEYS.slice().sort((a, b) => KEYS[idOf[a]].cost - KEYS[idOf[b]].cost);
+  const charsByFreq = [...PIN_CHARS].sort((a, b) => (uni[b] || 0) - (uni[a] || 0));
+  charsByFreq.forEach((c, i) => {
+    const want = idOf[keysByCost[i]];
+    const cur = assign[c];
+    const occupant = Object.keys(assign).find((x) => assign[x] === want && x !== c);
+    if (occupant !== undefined && cur !== undefined) assign[occupant] = cur;
+    else if (occupant !== undefined) {
+      const used = new Set(Object.values(assign));
+      assign[occupant] = KEYS.findIndex((_, i2) => !used.has(i2));
+    }
+    assign[c] = want;
+  });
+}
+
 const outPath = path.join(__dirname, '..', 'out', 'layout.json');
 const fresh = process.argv.includes('--fresh') || !fs.existsSync(outPath);
 let slotOf, best, init, mode, prevSlots = null;
@@ -159,6 +188,7 @@ if (fresh) {
   const slotsByCost = KEYS.map((k, i) => i).sort((i, j) => KEYS[i].cost - KEYS[j].cost);
   const greedy = {};
   chars.forEach((c, i) => (greedy[c] = slotsByCost[i]));
+  seedPins(greedy);
   init = score(greedy);
   best = Infinity;
   for (const s of [11, 22, 33, 44, 55, 66, 77, 20260612]) {
@@ -171,10 +201,21 @@ if (fresh) {
   prevSlots = prev.slots;
   const idToIdx = Object.fromEntries(KEYS.map((k, i) => [k.id, i]));
   const anchored = {};
-  for (const c of chars) anchored[c] = idToIdx[prev.slots[c]];
+  const usedIdx = new Set();
+  for (const c of chars) {
+    const idx = idToIdx[prev.slots[c]];
+    if (idx !== undefined) { anchored[c] = idx; usedIdx.add(idx); }
+  }
+  // 文字集合の改訂で前任席が無い新顔は、空いた席(追放された字の跡地)へ
+  const freeIdx = KEYS.map((_, i) => i).filter((i) => !usedIdx.has(i));
+  let fi = 0;
+  for (const c of chars) if (anchored[c] === undefined) anchored[c] = freeIdx[fi++];
+  seedPins(anchored);
   init = score(anchored);
   [slotOf, best] = climb(anchored, 20260612, 1000000);
 }
+
+
 
 const moved = prevSlots
   ? chars.filter((c) => KEYS[slotOf[c]].id !== prevSlots[c]).map((c) => `${c}: ${prevSlots[c]}→${KEYS[slotOf[c]].id}`)

@@ -81,6 +81,7 @@ assert(/基底|審査員/.test(el('status').textContent), '起動: 辞書+審査
 const layout = JSON.parse(fs.readFileSync(path.join(__dirname, 'layout.json'), 'utf8'));
 const ROWS = ['QWERTYUIOP', 'ASDFGHJKL;', 'ZXCVBNM,./'];
 const codeOf = (label) =>
+  /^[0-9]$/.test(label) ? 'Digit' + label :
   label === ';' ? 'Semicolon' : label === ',' ? 'Comma' : label === '.' ? 'Period' : label === '/' ? 'Slash' : 'Key' + label;
 const keyFor = (ch) => {
   const e2 = Object.entries(layout.slots).find(([c]) => c === ch);
@@ -209,23 +210,36 @@ assert(plain().endsWith('かのじ' + ghost2), `Tabで予測確定: かのじ+${
 assert(html().includes('class="pend"'), 'Tab確定後も未確定(青)のまま=続けて変換可');
 ok(`Tab予測確定(かのじ→かのじ${ghost2})`);
 
-// ---- 10c. 7=変換 / 8=カタカナ ----
+// ---- 10c. ：=表記を開く(カタカナ⇄ひらがな) / 数字段4578=がだじで ----
 down('Enter');
-await typeWord('かみ');
-down('Digit7');
-assert(el('mode').textContent === '▼', '7キーで変換が発動');
-down('AltLeft');
 await typeWord('ねこ');
-down('Digit8');
-assert(plain().endsWith('ネコ'), '8キーでカタカナ確定');
+down('Quote');
+assert(html().match(/class="cand">▼([^<]*)</)?.[1] === 'ネコ', '：でカタカナ候補');
+down('Quote');
+assert(html().match(/class="cand">▼([^<]*)</)?.[1] === 'ねこ', '：もう一押しでひらがなに戻る');
+down('Quote');
+assert(html().match(/class="cand">▼([^<]*)</)?.[1] === 'ネコ', '：は循環');
+down('Enter');
+assert(plain().endsWith('ネコ'), 'Enterで決定→ネコ');
+down('Digit8'); down('Digit4'); down('Digit7'); down('Digit5');
+assert(plain().endsWith('がだじで'), `数字段8475=がだじで: ${plain().slice(-6)}`);
+down('Enter');
+// 漢字候補の表示中からも：で開いて戻せる
+await typeWord('かみ');
+down('Space');
+assert(el('mode').textContent === '▼', 'Spaceで変換が発動');
+down('Quote');
+assert(html().match(/class="cand">▼([^<]*)</)?.[1] === 'カミ', '漢字候補から：でカタカナに開く');
+down('AltLeft');
+down('Enter');
 // 候補循環の最末尾にもカタカナが居る
 await typeWord('ねこ');
-down('Digit7');
+down('Space');
 let seenK = [], gk = 0, ck = html().match(/class="cand">▼([^<]*)</)?.[1];
-while (!seenK.includes(ck) && gk++ < 40) { seenK.push(ck); down('Digit7'); ck = html().match(/class="cand">▼([^<]*)</)?.[1]; }
+while (!seenK.includes(ck) && gk++ < 40) { seenK.push(ck); down('Space'); ck = html().match(/class="cand">▼([^<]*)</)?.[1]; }
 assert(seenK.includes('ネコ'), `候補循環にカタカナ: [${seenK.slice(0,8)}]`);
 down('AltLeft');
-ok('7=変換 / 8=カタカナ / 循環末尾カタカナ');
+ok('：=表記を開く(候補中も) / 数字段がだじで / 循環末尾カタカナ');
 
 // ---- 10d. F1〜F10 = 全角数字 ----
 down('Enter');
@@ -236,7 +250,7 @@ ok('F1〜F10=数字(F10=0)');
 // ---- 10e. ラティス変換(最低限の構文: は|会する でなく 破壊|する) ----
 down('Enter');
 await typeWord('をはかいする');
-down('Digit7');
+down('Space');
 const candL = html().match(/class="cand">▼([^<]*)</)?.[1];
 assert(candL && candL.includes('破壊'), `ラティスが破壊するを選ぶ: ${candL}`);
 down('Enter');
@@ -246,7 +260,7 @@ ok(`ラティス変換(をはかいする→${candL})`);
 // ---- 10f. Enter決定は改行を入れない(リピート・保留かな競合も) ----
 down('Enter');
 await typeWord('かみ');
-down('Digit7');
+down('Space');
 const before10f = plain();
 down('Enter'); // 決定
 assert(!plain().endsWith('\n'), 'Enter決定で改行が入らない');
@@ -254,7 +268,7 @@ down('Enter', { repeat: true }); // キーリピートの2発目
 assert(!plain().endsWith('\n'), 'リピートEnterでも改行が入らない');
 // 保留かな(和音窓内)+即Enter: かなは確定扱い、改行は入らない
 await typeWord('かみ');
-down('Digit7');
+down('Space');
 const kCode = keyFor('の').code; // 保留を作る(待たずに即Enter)
 down(kCode); up(kCode);
 down('Enter');
@@ -284,7 +298,7 @@ ok('活用形(はしった→走った)');
 down('Enter'); down('Enter');
 llmStub.reply = '2'; llmStub.delay = 10; llmStub.calls = 0;
 await typeWord('かみ');
-down('Digit7');
+down('Space');
 const first17 = html().match(/class="cand">▼([^<]*)</)?.[1];
 const total17 = Number(html().match(/\(1\/(\d+)\)/)?.[1]);
 await wait(80); // 審査員の応答を待つ
@@ -305,8 +319,8 @@ ok(`審査員が第一候補を決める(${first17}→${after17}、フィルタ$
 llmStub.delay = 100; llmStub.calls = 0;
 down('Backspace'); down('Backspace');
 await typeWord('かみ');
-down('Digit7');
-down('Digit7'); // ユーザが先に候補送り(candIdx=1)
+down('Space');
+down('Space'); // ユーザが先に候補送り(candIdx=1)
 const userPick = html().match(/class="cand">▼([^<]*)</)?.[1];
 await wait(180); // 遅れて審査員応答が届く
 const after18 = html().match(/class="cand">▼([^<]*)</)?.[1];
@@ -319,7 +333,7 @@ el('llm').onclick(); // OFF
 llmStub.calls = 0; llmStub.delay = 5;
 down('Backspace'); down('Backspace');
 await typeWord('かみ');
-down('Digit7');
+down('Space');
 await wait(60);
 assert(llmStub.calls === 0, '審OFFで審査員は呼ばれない');
 assert(localStorage.getItem('ne:llm') === 'off', 'OFFが永続化される');
@@ -363,20 +377,15 @@ down('AltLeft');
 assert(plain().endsWith('――'), 'キャンセルで――のまま');
 ok('……=記号変換の入口(――/「」/逆方向)');
 
-// ---- 19d. 自動閉じカッコ(間にカーソル) ----
+// ---- 19d. 自動閉じカッコ(間にカーソル)。」は直接キーを持たない(自動閉じ+…変換で出す) ----
 down('Enter');
 await type('「');
 assert(html().includes('class="closers"') && html().includes('」'), '「で閉じが予約表示される');
 assert(!plain().endsWith('」'), '本文にはまだ」が入っていない');
 await typeWord('かな');
-await type('」');
-assert(plain().endsWith('「かな」'), `」で閉じる: ${plain().slice(-6)}`);
-assert(!html().includes('class="closers"'), '予約が消化された');
-// Enterでも閉じる
-await type('「');
-await typeWord('かな');
 down('Enter'); // かな確定+閉じ実体化
 assert(plain().endsWith('「かな」'), `Enterで閉じ実体化: ${plain().slice(-6)}`);
+assert(!html().includes('class="closers"'), '予約が消化された');
 // 変換でペア: かっこ→『』、カーソルは中
 await typeWord('かっこ');
 down('Space');
@@ -401,17 +410,18 @@ await type('！');
 await typeWord('かな');
 assert(plain().includes('！　かな'), `！の後に全角アキ: ${JSON.stringify(plain().slice(-6))}`);
 await type('。');
-await type('」');
-assert(plain().endsWith('かな」') && !plain().includes('。」'), `。」の句点が落ちる: ${plain().slice(-8)}`);
+down('Enter'); // 閉じ実体化
+assert(plain().endsWith('かな」') && !plain().includes('。」'), `。」の句点が落ちる(Enter閉じでも): ${plain().slice(-8)}`);
 ok('作法エンジン(字下げ/！？アキ/。」)');
 
 // ---- 19f. LLM採取で固有名詞を自動登録(2回観察) ----
 down('Enter');
 await typeWord('りふぃあ');
-down('Digit8'); // リフィア(1回目)
+down('Quote'); // リフィア(1回目): ：でカタカナ候補→次のかなで決定
 await typeWord('と');
 await typeWord('りふぃあ');
-down('Digit8'); // リフィア(2回目)
+down('Quote'); // リフィア(2回目)
+down('Enter'); // 決定
 down('Enter');
 llmStub.harvest = 'リフィア,りふぃあ\nミスリル,みすりる';
 el('save').onclick(); // 保存→採取が走る
