@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>novel-editor</title>
+<style>
+  :root { --accent: #2f6f4f; --bg: #fafaf7; --ink: #222; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid #ddd; font-family: sans-serif; font-size: 13px; }
+  header .title { font-weight: 600; color: var(--accent); }
+  header button { font-size: 12px; padding: 3px 10px; border: 1px solid #bbb; background: #fff; border-radius: 3px; cursor: pointer; }
+  header button:hover { border-color: var(--accent); color: var(--accent); }
+  #mode { font-size: 16px; width: 24px; text-align: center; color: var(--accent); font-weight: bold; }
+  #count { color: #888; margin-left: auto; }
+  #text { flex: 1; overflow-y: auto; padding: 24px 32px; font-size: 17px; line-height: 2.0; white-space: pre-wrap; word-break: break-all; outline: none; }
+  .mark { background: #dcefe5; border-bottom: 2px solid var(--accent); }
+  .cand { background: var(--accent); color: #fff; border-radius: 2px; padding: 0 2px; }
+  .conv-flash { color: var(--accent); background: #dcefe5; border-radius: 2px; }
+  .pend { color: #1e56c8; border-bottom: 1px dotted #1e56c8; }
+  .ghost { color: #a9c4ef; }
+  .closers { color: #b0a698; }
+  .candinfo { font-size: 11px; color: #999; font-family: sans-serif; }
+  .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: text-bottom; animation: blink 1s step-start infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  #charts { display: flex; gap: 24px; justify-content: center; padding: 10px; border-top: 1px solid #ddd; background: #f2f2ee; }
+  .chart h3 { font-family: sans-serif; font-size: 11px; color: #777; text-align: center; margin-bottom: 4px; font-weight: normal; }
+  .krow { display: flex; justify-content: center; }
+  .krow:nth-child(2) { margin-left: 14px; }
+  .krow:nth-child(3) { margin-left: 0; }
+  .key { width: 40px; height: 46px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
+  .key .chord { font-size: 11px; line-height: 1; color: #999; }
+  .key .kana { font-size: 16px; line-height: 1; }
+  .key .label { font-size: 7px; color: #aaa; font-family: monospace; position: absolute; bottom: 1px; right: 3px; }
+  .key .gyo-0 { color: #f00000; font-weight: 600; }
+  .key .gyo-1 { color: #ff7070; font-weight: 600; }
+  .key .gyo-2 { color: #00a626; font-weight: 600; }
+  .key .gyo-3 { color: #004d0f; font-weight: 600; }
+  .key .gyo-4 { color: #0066ff; font-weight: 600; }
+  .key .gyo-5 { color: #001f7a; font-weight: 600; }
+  .key .gyo-6 { color: #000000; font-weight: 600; }
+  .key .gyo-7 { color: #8c8c8c; font-weight: 600; }
+  .key .gyo-8 { color: #b400e0; font-weight: 600; }
+  .key .gyo-9 { color: #4b0082; font-weight: 600; }
+  .key .small-kana { color: #9e2b25 !important; font-weight: bold; }
+  .key.home { border: 3px solid #1e2f5e; }
+  .key.cross { background: #e3f1e9; border-color: #a7cfba; }
+  .key.shiftkey { width: 58px; background: #f4f2ea; }
+  .key.shiftkey .kana { color: #888; font-size: 14px; }
+  .key.hit { background: var(--accent); border-color: var(--accent); }
+  .key.hit .kana, .key.hit .chord { color: #fff; }
+  footer { display: flex; gap: 16px; padding: 4px 16px; font-family: monospace; font-size: 11px; color: #888; border-top: 1px solid #e5e5e0; }
+  #keycode { color: var(--accent); min-width: 90px; }
+  header select { font-size: 12px; padding: 2px; border: 1px solid #bbb; border-radius: 3px; background: #fff; }
+  #text.flash { background: #fbe9e7; }
+  #text.tut { display: flex; align-items: center; justify-content: center; }
+  .drill { text-align: center; font-family: sans-serif; }
+  .drill .stagename { font-size: 13px; color: #888; margin-bottom: 18px; }
+  .drill .target { font-size: 30px; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; letter-spacing: 4px; margin-bottom: 14px; }
+  .drill .target .done { color: #bbb; }
+  .drill .target .cur { color: var(--accent); border-bottom: 3px solid var(--accent); }
+  .drill .target .rest { color: var(--ink); }
+  .drill .target .yomi { font-size: 16px; color: #999; margin-left: 10px; }
+  .drill .target.long { font-size: 19px; letter-spacing: 2px; }
+  .drill .target.long .yomi { display: block; font-size: 13px; margin-top: 6px; }
+  .drill .typed { font-size: 22px; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; min-height: 36px; color: var(--accent); }
+  .drill .hintline { font-size: 14px; color: #777; margin-top: 12px; min-height: 20px; }
+  .drill .stats { font-size: 11px; color: #aaa; margin-top: 20px; }
+  @keyframes glowG { 0%,100% { box-shadow: 0 0 4px 2px rgba(47,111,79,.95); } 50% { box-shadow: 0 0 20px 8px rgba(47,111,79,.45); } }
+  @keyframes glowO { 0%,100% { box-shadow: 0 0 4px 2px rgba(194,87,26,.95); } 50% { box-shadow: 0 0 20px 8px rgba(194,87,26,.45); } }
+  .key.hint { border-color: var(--accent); background: #e7f6ee; transform: scale(1.18); z-index: 2; animation: glowG .8s ease-in-out infinite; }
+  .key.hint .kana { color: var(--accent) !important; font-weight: bold; font-size: 19px; }
+  .key.hint-chord { border-color: #c2571a; background: #fdf0e6; transform: scale(1.18); z-index: 2; animation: glowO .8s ease-in-out infinite; }
+  .key.hint-chord .chord { color: #c2571a !important; font-weight: bold; font-size: 16px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="title">novel-editor</span>
+    <span id="mode">─</span>
+    <button id="sound">♪</button>
+    <button id="llm" title="ローカルLLM審査員(候補の文脈選択)">審…</button>
+    <button id="tut-btn">練習</button>
+    <select id="tut-stage"></select>
+    <button id="save">保存</button>
+    <button id="export">書き出し</button>
+    <span id="count"></span>
+  </header>
+  <div id="text"></div>
+  <div id="charts">
+    <div class="chart"><h3>上段=Shift / 下段=単打　(紺=ホーム段・<span style="color:#9e2b25">えんじ=小書き・色=行ごと</span>)</h3><div id="chart"></div></div>
+  </div>
+  <footer>
+    <span>code: <span id="keycode">─</span></span>
+    <span id="status"></span>
+    <span>よみ→ Space=変換(Enter=決定)・ 8=カタカナ ・ Tab=予測確定 ・ Shift+キー=シフト面 ・ F1〜F10=数字 ・ 戻る=英数/Option ・ space+キー=和音 ・ ゛=変形</span>
+  </footer>
+  <script type="module" src="./editor.js"></script>
+</body>
+</html>

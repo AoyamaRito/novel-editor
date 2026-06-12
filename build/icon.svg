@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#37815c"/>
+      <stop offset="1" stop-color="#27593f"/>
+    </linearGradient>
+    <linearGradient id="cap" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffefa"/>
+      <stop offset="1" stop-color="#eceadf"/>
+    </linearGradient>
+  </defs>
+  <!-- プレート -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <!-- キーキャップ(下に厚み) -->
+  <rect x="216" y="262" width="592" height="540" rx="96" fill="#1f4632"/>
+  <rect x="216" y="232" width="592" height="540" rx="96" fill="url(#cap)"/>
+  <!-- ……(三点リーダ×2) -->
+  <g fill="#2f6f4f">
+    <circle cx="332" cy="502" r="30"/>
+    <circle cx="408" cy="502" r="30"/>
+    <circle cx="484" cy="502" r="30"/>
+    <circle cx="560" cy="502" r="30"/>
+    <circle cx="636" cy="502" r="30"/>
+    <circle cx="712" cy="502" r="30"/>
+  </g>
+  <!-- キャレット(執筆中) -->
+  <rect x="664" y="580" width="16" height="150" rx="8" fill="#c2571a"/>
+</svg>
