@@ -1139,9 +1139,9 @@ function onKeyup(e) {
 // ---- 縦書きレイアウト(電撃文庫仕様: 42字×17行・見開き・ぶら下がり・禁則) ----
 const LINE_LEN = 42, PAGE_LINES = 17;
 const HANG = new Set([...'。、']); // 句読点だけ43字目にぶら下げ(電撃式)
-const KINSOKU_HEAD = new Set([...'」』）！？…ーゃゅょっぁぃぅぇぉ々']); // 行頭に置けない→前の字ごと追い出し
-const KINSOKU_TAIL = new Set([...'「『（']); // 行末に置けない→次行へ送る
-const LEADER = new Set([...'…―']); // ……/――は行をまたいで分割しない
+// 行頭に置けない字(JIS X 4051系): 閉じ類・小書き(ひら+カタ)・長音・リーダー・ダッシュ・繰返し記号など
+const KINSOKU_HEAD = new Set([...'」』）〕》〉】！？!?…―ーゃゅょっゎぁぃぅぇぉャュョッヮァィゥェォヵヶ々ゝゞヽヾ・：；']);
+const KINSOKU_TAIL = new Set([...'「『（〔《〈【']); // 行末に置けない→次行へ送る
 function layoutLines(tokens) {
   const lines = [];
   let cur = [], count = 0;
@@ -1155,22 +1155,32 @@ function layoutLines(tokens) {
     }
     cur.push(t); count++;
     if (count >= LINE_LEN) {
-      let j = i + 1;
-      while (j < tokens.length && tokens[j].caret) j++;
-      const nx = tokens[j];
       const popReal = (carry) => { // 末尾の実文字1個(随伴キャレット込み)を次行へ
         while (cur.length) { const x = cur.pop(); carry.unshift(x); if (!x.caret) { count--; break; } }
       };
-      let carry = [];
-      if (nx && nx.c !== '\n' && HANG.has(nx.c)) {
-        for (let k = i + 1; k <= j; k++) cur.push(tokens[k]); // 句読点のみ43字目にぶら下げ
-        i = j;
-      } else if (nx && nx.c !== '\n' && LEADER.has(nx.c) && LEADER.has(realLast()?.c)) {
-        popReal(carry); // ……/――の分割禁止: 前半ごと次行へ
-      } else if (nx && nx.c !== '\n' && KINSOKU_HEAD.has(nx.c)) {
-        popReal(carry); // 行頭禁則: 前の字ごと追い出し
+      // 次に続く「行頭に置けない連なり」(クラスタ)を実文字で最大3つ覗く
+      const run = [];
+      let j = i;
+      for (let step = 0; step < 3; step++) {
+        let k = j + 1;
+        while (k < tokens.length && tokens[k].caret) k++;
+        const t2 = tokens[k];
+        if (!t2 || t2.c === '\n' || !(HANG.has(t2.c) || KINSOKU_HEAD.has(t2.c))) break;
+        run.push(t2.c);
+        j = k;
       }
-      if (KINSOKU_TAIL.has(realLast()?.c)) popReal(carry); // 開き括弧は行末に置けない
+      let carry = [];
+      if (run.length && run.every((c) => HANG.has(c)) && run.length <= 2) {
+        for (let k = i + 1; k <= j; k++) cur.push(tokens[k]); // 純句読点クラスタは43字目以降にぶら下げ
+        i = j;
+      } else if (run.length) {
+        // 追い出し: 露出した行頭が安全な字になるまで前の字ごと次行へ(……の分割禁止もここで満たされる)
+        let guard = 0;
+        do { popReal(carry); guard++; }
+        while (guard < 4 && count > 0 && carry.length && (KINSOKU_HEAD.has(carry.find((x) => !x.caret)?.c) || HANG.has(carry.find((x) => !x.caret)?.c)));
+      }
+      let guard2 = 0;
+      while (guard2++ < 3 && KINSOKU_TAIL.has(realLast()?.c)) popReal(carry); // 開き括弧の連なりも行末に残さない
       lines.push(cur);
       cur = carry;
       count = carry.filter((x) => !x.caret).length;
