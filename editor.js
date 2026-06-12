@@ -578,7 +578,21 @@ async function llmAsk(list, context) {
 }
 // 先読みキャッシュ: ひらがな入力中に裏で審査しておき、Space の瞬間に同期適用する
 const specCache = new Map(); // key(読み+文脈+候補列) -> nums
-let specTimer = null;
+let specDirty = false, specBusy = false;
+// 常時追走(single-flight): ガリガリ打ち続けても、走者1人が常に最新の読みで審査し直す
+function kickSpeculate() {
+  specDirty = true;
+  if (specBusy) return;
+  specBusy = true;
+  (async () => {
+    while (specDirty) {
+      specDirty = false;
+      await new Promise((r) => setTimeout(r, 60)); // 連打を束ねる
+      try { await speculate(); } catch {}
+    }
+    specBusy = false;
+  })();
+}
 function specKey(yomi, context, list) { return yomi + '\x1f' + context + '\x1f' + list.join('\x1f'); }
 async function speculate() {
   if (!llmReady || !llmOn || tut || mode !== 'NONE') return;
@@ -888,10 +902,7 @@ function emit(ch) {
     }
     out(ch);
   }
-  if (!tut && mode === 'NONE') { // ひらがな入力中に裏で審査(先読み)
-    clearTimeout(specTimer);
-    specTimer = setTimeout(speculate, 180);
-  }
+  if (!tut && mode === 'NONE') kickSpeculate(); // 入力中じゅう、最新の読みで裏審査が追走する
   render();
 }
 function backspace() {

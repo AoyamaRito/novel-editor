@@ -708,5 +708,19 @@ ok('監査4R(import非破壊・curDocId・boot固定)');
 }
 ok('先読み審査(入力中に審査→Space即適用)');
 
+// ---- 44. ガリガリ打ち→即Space でも審査が追いつく(非同期フォールバック) ----
+{
+  down('Enter');
+  llmStub.reply = '2'; llmStub.delay = 30;
+  await typeWord('かみ'); // 待たずに
+  down('Space');          // 即変換(キャッシュ未着の想定)
+  await wait(200);        // 追走中の審査が着地する
+  const catchUp = html().match(/class="cand">▼([^<]*)</)?.[1];
+  assert(catchUp === '神', `高速打鍵でも審査が追いつく: ${catchUp}`);
+  down('AltLeft');
+  llmStub.reply = '1';
+}
+ok('ガリガリ打ち耐性(常時追走+非同期着地)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
