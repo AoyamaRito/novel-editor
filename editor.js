@@ -49,7 +49,8 @@ let committedTo = 0; // 未確定領域の開始。committedTo..cursor の末尾
 let cursor = 0; // 挿入位置(キャレット)。クリック/矢印で移動できる
 let selfPred = [];   // 予測用: 自分の語彙(コーパス+確定学習)の [読み, スコア]
 let convRestore = ''; // 変換キャンセル時に戻す文字列(予測変換では打った分だけ戻す)
-let symJump = 0; // 句読点を透かして変換した時、確定後にカーソルを記号の後ろへ戻す量
+let symJump = 0;
+let abcMode = false; // 英数キー(Lang2/無変換)でトグル。刻印どおりのQWERTYを素通し // 句読点を透かして変換した時、確定後にカーソルを記号の後ろへ戻す量
 let undoStack = [], redoStack = [], lastSnapT = 0; // Undo/Redo(状態スナップショット)
 let curDocId = localStorage.getItem('ne:curDoc') || 'novel:manuscript'; // 複数原稿
 let lastQuery = ''; // 検索
@@ -1530,6 +1531,26 @@ function onKeydown(e) {
   document.querySelectorAll(`[data-code="${code}"]`).forEach((k) => k.classList.add('hit'));
   statusKey(code);
 
+  // ABCモード: 刻印どおりの半角英数を素通し(英数/Escでかなへ戻る)
+  if (abcMode && !tut && !e.metaKey && !e.ctrlKey) {
+    if (code === 'Lang2' || code === 'NonConvert' || code === 'Escape') {
+      e.preventDefault(); abcMode = false;
+      status('かな入力に戻りました'); render(); return;
+    }
+    if (code === 'Backspace') { e.preventDefault(); backspace(); render(); return; }
+    if (code === 'Enter') { e.preventDefault(); if (!e.repeat) { out('\n'); render(); } return; }
+    if (typeof e.key === 'string' && e.key.length === 1 && e.key.charCodeAt(0) >= 0x20 && e.key.charCodeAt(0) < 0x7f) {
+      e.preventDefault();
+      if (e.repeat) return;
+      snap(false);
+      followCaret = true;
+      text = text.slice(0, cursor) + e.key + text.slice(cursor); // 作法エンジンは通さない(生のまま)
+      cursor++; committedTo = cursor;
+      render(); return;
+    }
+    if (plainMap[code] !== undefined || chordMap[code] !== undefined) { e.preventDefault(); return; } // かな発火を抑止
+  }
+
   // 変換系キーは modifier 判定より先に拾う(右Cmd は metaKey を立てるため)
   if (HENKAN_CODES.includes(code)) {
     e.preventDefault();
@@ -1540,6 +1561,10 @@ function onKeydown(e) {
   if (CANCEL_CODES.includes(code)) {
     e.preventDefault();
     if (tut && tut.type === 'kana') return;
+    if (mode !== 'CAND' && !tut && (code === 'Lang2' || code === 'NonConvert')) { // 候補が無いときの英数=ABCモード入り
+      abcMode = true; committedTo = cursor;
+      status('ABC入力(英数キーでかなに戻る)'); render(); return;
+    }
     cancel(); return;
   }
   if (e.metaKey || e.ctrlKey) {
@@ -1654,9 +1679,21 @@ function onKeyup(e) {
 const LINE_LEN = 42, PAGE_LINES = 17;
 const HANG = new Set([...'。、']); // 句読点だけ43字目にぶら下げ(電撃式)
 // 行頭に置けない字(JIS X 4051系): 閉じ類・小書き(ひら+カタ)・長音・リーダー・ダッシュ・繰返し記号など
-const KINSOKU_HEAD = new Set([...'」』）〕》〉】！？!?…―ーゃゅょっゎぁぃぅぇぉャュョッヮァィゥェォヵヶ々ゝゞヽヾ・：；']);
+const KINSOKU_HEAD = new Set([...'」』）〕》〉】！？!?…―ーゃゅょっゎぁぃぅぇぉャュョッヮァィゥェォヵヶ々ゝゞヽヾ・：；', '！？', '！！', '？？', '？！']);
 const KINSOKU_TAIL = new Set([...'「『（〔《〈【']); // 行末に置けない→次行へ送る
 function layoutLines(tokens) {
+  // ！？/！！等の連続2つは縦中横で1マスに(電撃式)。本文データは2字のまま、表示だけ併合
+  for (let k = 0; k < tokens.length - 1; k++) {
+    const a = tokens[k];
+    if (!a || a.caret || !'！？'.includes(a.c)) continue;
+    let m = k + 1;
+    while (m < tokens.length && tokens[m].caret) m++; // キャレットは挟んでよい(間にカーソルが居る時は併合しない方が自然だが、位置情報を保つため不可視のまま許す)
+    const b = tokens[m];
+    if (!b || !'！？'.includes(b.c) || a.cls !== b.cls || m !== k + 1) continue;
+    a.c = a.c + b.c;
+    a.cls = (a.cls ? a.cls + ' ' : '') + 'tcy';
+    tokens.splice(m, 1);
+  }
   const lines = [];
   let cur = [], count = 0;
   const realLast = () => { for (let k = cur.length - 1; k >= 0; k--) if (!cur[k].caret) return cur[k]; return null; };
@@ -1770,7 +1807,7 @@ function render() {
     if (cl) cl.style.top = caretEl.offsetTop - 6 + 'px';
   }
   document.getElementById('mode').textContent =
-    mode === 'NONE' ? '─' : '▼';
+    abcMode ? 'A' : mode === 'NONE' ? '─' : '▼';
   document.getElementById('count').textContent = `${text.length}字`;
 }
 function renderTate(el) {
@@ -1817,7 +1854,7 @@ function renderTate(el) {
     viewSpread = v >= totalSpreads ? -1 : v - 1;
     render();
   };
-  document.getElementById('mode').textContent = mode === 'NONE' ? '─' : '▼';
+  document.getElementById('mode').textContent = abcMode ? 'A' : mode === 'NONE' ? '─' : '▼';
   document.getElementById('count').textContent = `${text.length}字 ・ 見開き ${si + 1}/${totalSpreads}`;
 }
 function renderTut(el) {
