@@ -61,6 +61,29 @@ ipcMain.handle('read-file', (e, { name }) => {
   return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
 });
 
+// 作品ファイル(正本txt)の開く/書き込み
+ipcMain.handle('open-dialog', async () => {
+  const r = await dialog.showOpenDialog({
+    defaultPath: path.join(app.getPath('documents'), 'novel-editor'),
+    filters: [{ name: 'テキスト', extensions: ['txt'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  return { path: r.filePaths[0], content: fs.readFileSync(r.filePaths[0], 'utf8') };
+});
+ipcMain.handle('new-dialog', async () => {
+  const r = await dialog.showSaveDialog({
+    defaultPath: path.join(app.getPath('documents'), 'novel-editor', '新しい作品.txt'),
+    filters: [{ name: 'テキスト', extensions: ['txt'] }],
+  });
+  return r.canceled ? null : r.filePath;
+});
+ipcMain.handle('write-abs', (e, { p, content }) => {
+  try { if (fs.existsSync(p)) fs.copyFileSync(p, p + '.bak'); } catch {} // 1世代バックアップ
+  fs.writeFileSync(p, content, 'utf8');
+  return p;
+});
+
 // 保存ダイアログ付きエクスポート(どこに出たか分かるように)
 ipcMain.handle('export-dialog', async (e, { defaultName, content }) => {
   const r = await dialog.showSaveDialog({

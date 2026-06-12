@@ -821,5 +821,36 @@ ok('音声: かな正規化+表記主権+固有名詞復元');
 }
 ok('声合わせ(聞き癖採取→かな化の正解例示)');
 
+// ---- 51. 作品ファイル形式(本文+メタ同居・自己検証) ----
+{
+  const w = globalThis.__neWork.serialize();
+  assert(w.includes('機械用メタ'), 'マーカー入り');
+  const parsed = globalThis.__neWork.parse(w);
+  assert(parsed.verified && parsed.body === plain().replace(/⏎/g, ''), 'roundtrip: 本文一致+sha検証 ✓');
+  assert(parsed.meta.chainHead.length >= 1 && parsed.meta.name, 'メタにチェーン錨と名前');
+  const tampered = w.replace(/。/, '!');
+  assert(globalThis.__neWork.parse(tampered).verified === false, '外部編集(改ざん)を検出');
+  const noMeta = globalThis.__neWork.parse('ただのテキスト\n');
+  assert(noMeta.meta === null && noMeta.body === 'ただのテキスト', 'メタ無しの素txtも開ける');
+}
+ok('作品ファイル(本文+sha+チェーン錨の同居形式)');
+
+// ---- 51. 作品の改名(履歴ごと引き継ぎ) ----
+{
+  globalThis.window = { prompt: () => 'はじまりの物語', confirm: () => true };
+  const txt51 = plain();
+  globalThis.__neRename();
+  delete globalThis.window;
+  assert(plain() === txt51, '本文は不変');
+  assert(el('doc').innerHTML.includes('はじまりの物語'), 'セレクタに新名称');
+  const rn = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'doc-rename').pop();
+  assert(rn && rn.from === 'novel:manuscript' && rn.to === 'novel:はじまりの物語', '改名がチェーンに記録');
+  el('save').onclick();
+  await wait(30);
+  const st51 = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'state').pop();
+  assert(st51.d === 'novel:はじまりの物語', '以後のstateは新IDで固定される');
+}
+ok('作品の改名(履歴引き継ぎ+チェーン記録)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

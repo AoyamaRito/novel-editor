@@ -98,6 +98,25 @@ function switchDoc(id) {
   render();
   status(`作品: ${id.replace('novel:', '')}`);
 }
+function renameDoc() {
+  const cur = curDocId.replace('novel:', '');
+  const name = typeof window !== 'undefined' && window.prompt ? window.prompt('作品名を変更:', cur) : null;
+  if (!name || !name.trim() || name.trim() === cur) return;
+  const newId = 'novel:' + name.trim();
+  if (graph.has(newId)) { status('その名前の作品は既にあります'); return; }
+  manuscript.applyPatch(text); // 最新を確定してから移す
+  const moved = new Block({ id: newId, type: 'text', versions: manuscript.versions }); // 履歴ごと引き継ぐ
+  graph.add(moved);
+  graph.blocks.delete(curDocId);
+  logEvt('doc-rename', { from: curDocId, to: newId });
+  curDocId = newId;
+  localStorage.setItem('ne:curDoc', newId);
+  manuscript = moved;
+  localStorage.setItem('ne:graph', JSON.stringify(graph.toJSON()));
+  refreshDocSel();
+  status(`作品名を「${name.trim()}」に変更しました(履歴も引き継ぎ)`);
+}
+globalThis.__neRename = renameDoc; // e2e用(promptはwindow経由なので実機のみ)
 function newDoc() {
   const name = typeof window !== 'undefined' && window.prompt ? window.prompt('新しい作品名:') : null;
   if (!name || !name.trim()) return;
@@ -154,7 +173,10 @@ async function save() {
   const r = manuscript.applyPatch(text);
   localStorage.setItem('ne:graph', JSON.stringify(graph.toJSON()));
   let where = 'localStorage';
-  if (ipc) {
+  if (ipc && curFile) {
+    try { where = await ipc.invoke('write-abs', { p: curFile, content: serializeWork() }); } // 正本=本文+メタ同居txt(.bak一世代)
+    catch (e) { where = 'localStorage(ディスク保存失敗)'; }
+  } else if (ipc) {
     try {
       const p = await ipc.invoke('save-file', { name: curDocId.replace('novel:', '') + '.txt', content: text });
       await ipc.invoke('save-file', { name: 'graph.json', content: JSON.stringify(graph.toJSON()) });
@@ -623,6 +645,76 @@ async function micToggle(viaPtt) {
     const dev = stream.getAudioTracks()[0]?.label || '不明なデバイス';
     status(viaPtt ? `録音中(${dev})…(左Cmdを離すと書き起こし)` : `録音中(${dev})…(🎤で停止→書き起こし)`);
   } catch { status('マイクの使用が許可されませんでした'); }
+}
+
+// ---- 作品ファイル(正本): 本文プレーンtxt + 機械用メタ(sha/チェーン錨)の同居形式 ----
+const WORK_MARKER = '\n――― novel-editor: 以下は機械用メタ(本文はこの行より上) ―――\n';
+let curFile = localStorage.getItem('ne:curFile') || null;
+function serializeWork() {
+  const meta = {
+    v: 1,
+    name: curDocId.replace('novel:', ''),
+    savedAt: new Date().toISOString(),
+    sha: sha256hex(text),
+    len: text.length,
+    chainHead: logHash,
+  };
+  return text + WORK_MARKER + JSON.stringify(meta) + '\n';
+}
+function parseWork(content) {
+  const i = content.lastIndexOf(WORK_MARKER);
+  if (i < 0) return { body: content.replace(/\n$/, ''), meta: null, verified: false };
+  const body = content.slice(0, i);
+  let meta = null;
+  try { meta = JSON.parse(content.slice(i + WORK_MARKER.length)); } catch {}
+  return { body, meta, verified: !!meta && meta.sha === sha256hex(body) };
+}
+globalThis.__neWork = { serialize: serializeWork, parse: parseWork }; // e2e 用
+function adoptFile(p, body, name) {
+  curFile = p;
+  localStorage.setItem('ne:curFile', p);
+  curDocId = 'novel:' + name;
+  localStorage.setItem('ne:curDoc', curDocId);
+  text = body;
+  cursor = text.length; committedTo = cursor;
+  closers = []; mode = 'NONE'; reading = '';
+  undoStack = []; redoStack = []; viewSpread = -1; followCaret = true;
+  manuscript = graph.get(curDocId) || new Block({ id: curDocId, type: 'text' });
+  if (!graph.has(curDocId)) graph.add(manuscript);
+  const fb = document.getElementById('filename');
+  if (fb) fb.textContent = name;
+  render();
+}
+async function openFile() {
+  if (!ipc) { status('ファイルを開くのは Electron 実行時のみです'); return; }
+  const r = await ipc.invoke('open-dialog');
+  if (!r) return;
+  const name = r.path.split('/').pop().replace(/\.txt$/, '');
+  const { body, meta, verified } = parseWork(r.content);
+  if (meta && !verified) {
+    if (!window.confirm('このファイルは外部で編集されています(本文shaが不一致)。開いて再基準化しますか?')) return;
+    adoptFile(r.path, body, name);
+    logEvt('extedit', { f: name, sha: sha256hex(body), len: body.length }); // 外部編集を正直に記録
+    status(`開きました(外部編集を検出・再基準化): ${name}`);
+  } else if (meta) {
+    adoptFile(r.path, body, name);
+    logEvt('open', { f: name, sha: meta.sha, head: meta.chainHead });
+    status(`開きました: ${name}(整合 ✓)`);
+  } else {
+    adoptFile(r.path, body, name);
+    logEvt('openext', { f: name, sha: sha256hex(body), len: body.length }); // 外部由来ファイル
+    status(`開きました(外部ファイル・由来として記録): ${name}`);
+  }
+}
+async function newFile() {
+  if (!ipc) { status('新規ファイルは Electron 実行時のみです'); return; }
+  const p = await ipc.invoke('new-dialog');
+  if (!p) return;
+  const name = p.split('/').pop().replace(/\.txt$/, '');
+  adoptFile(p, '', name);
+  await ipc.invoke('write-abs', { p, content: serializeWork() });
+  logEvt('doc', { id: curDocId });
+  status(`新しい作品: ${name}`);
 }
 
 // ---- バックアップ/復元: 原稿(履歴ごと)+学習データ+設定を1つのJSONに ----
@@ -1840,10 +1932,29 @@ async function main() {
   if (typeof navigator !== 'undefined' && navigator.mediaDevices)
     navigator.mediaDevices.ondevicechange = populateMics;
   const docSel = document.getElementById('doc');
-  refreshDocSel();
-  if (docSel) docSel.onchange = (ev) => switchDoc(ev.target.value);
   const nd = document.getElementById('newdoc');
-  if (nd) nd.onclick = newDoc;
+  if (ipc) { // ファイルが正本: セレクタは隠して開く/新規ボタン
+    if (docSel && docSel.style) docSel.style.display = 'none';
+    if (nd && nd.style) nd.style.display = 'none';
+    const rn2 = document.getElementById('renamedoc');
+    if (rn2 && rn2.style) rn2.style.display = 'none'; // ファイル正本では改名はOSで
+    const ob = document.getElementById('openfile');
+    const nb = document.getElementById('newfile');
+    if (ob) ob.onclick = openFile;
+    if (nb) nb.onclick = newFile;
+    const fb = document.getElementById('filename');
+    if (fb) fb.textContent = curFile ? curFile.split('/').pop().replace(/\.txt$/, '') : '(未保存: 新規で場所を決める)';
+  } else {
+    const ob = document.getElementById('openfile');
+    const nb = document.getElementById('newfile');
+    if (ob && ob.style) ob.style.display = 'none';
+    if (nb && nb.style) nb.style.display = 'none';
+    refreshDocSel();
+    if (docSel) docSel.onchange = (ev) => switchDoc(ev.target.value);
+    if (nd) nd.onclick = newDoc;
+  }
+  const rn = document.getElementById('renamedoc');
+  if (rn) rn.onclick = renameDoc;
   const textEl = document.getElementById('text');
   textEl.addEventListener?.('scroll', () => { if (!progScroll && !tategaki) followCaret = false; });
   textEl.addEventListener?.('wheel', (ev) => {
