@@ -488,5 +488,17 @@ assert(html().includes('class="nl"'), '縦書きでも改行マークが出る')
 el('tate').onclick();
 ok('改行マーク+カーソル行強調');
 
+// ---- 30. 貼り付け(改行正規化・カーソル位置挿入・即確定) ----
+down('Enter'); down('Enter');
+const L30 = plain().length;
+globalThis.__nePaste('はろー\r\nわーるど');
+assert(plain().endsWith('はろー\nわーるど'), `貼り付け+改行正規化: ${JSON.stringify(plain().slice(-9))}`);
+assert(!html().includes('class="pend"'), '貼り付けは未確定にならない(即確定)');
+globalThis.__neMove(L30 + 3); // はろー の直後
+globalThis.__nePaste('ぴこ');
+assert(plain().includes('はろーぴこ\n'), '途中貼り付け');
+globalThis.__neMove(plain().length);
+ok('コピペ(貼り付け・正規化・途中挿入)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

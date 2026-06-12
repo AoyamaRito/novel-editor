@@ -122,6 +122,26 @@ function moveCursor(p) {
 }
 globalThis.__neMove = moveCursor; // e2e 用
 
+// ---- コピペ(Electron clipboard。選択範囲は未実装なのでコピーは全文) ----
+const eClipboard = typeof window !== 'undefined' && window.require ? window.require('electron').clipboard : null;
+function pasteText(raw) {
+  if (tut || !raw) return;
+  const t = raw.replace(/\r\n?/g, '\n'); // 改行コード正規化。作法エンジンは通さず原文のまま挿入
+  if (mode === 'CAND') confirmCand();
+  text = text.slice(0, cursor) + t + text.slice(cursor);
+  cursor += t.length;
+  committedTo = cursor;
+  viewSpread = -1;
+  status(`${t.length}字を貼り付けました`);
+  render();
+}
+globalThis.__nePaste = pasteText; // e2e 用
+function copyAll() {
+  if (eClipboard) eClipboard.writeText(text);
+  else navigator.clipboard?.writeText(text);
+  status(`全文(${text.length}字)をコピーしました`);
+}
+
 // クリック位置 → 本文オフセット(縦書きは data-i、横書きは caretRangeFromPoint で算出)
 function clickOffset(ev) {
   const t = ev.target?.closest?.('[data-i]');
@@ -674,6 +694,11 @@ function onKeydown(e) {
   }
   if (e.metaKey || e.ctrlKey) {
     if (code === 'KeyS') { e.preventDefault(); save(); }
+    else if (code === 'KeyV') {
+      e.preventDefault();
+      if (eClipboard) pasteText(eClipboard.readText());
+      else navigator.clipboard?.readText().then(pasteText);
+    } else if (code === 'KeyC') { e.preventDefault(); copyAll(); }
     return;
   }
   if (code === 'Escape' && tut) { stopTut(); return; }
