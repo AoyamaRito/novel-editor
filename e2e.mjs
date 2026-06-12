@@ -937,6 +937,8 @@ ok('審査員の合議(不一致は沈黙=能動誤審ゼロ)');
 // ---- 57. ABCモード(英数キーで刻印どおりのQWERTY) ----
 {
   down('Enter');
+  assert(el('chart').innerHTML.includes('data-code="BracketLeft"') && el('chart').innerHTML.includes('>ABC<'), '盤に@キー(ABC)が描いてある');
+  assert(el('chart').innerHTML.includes('data-code="Quote"') && el('chart').innerHTML.includes('>開く<'), '盤に：キー(開く)が描いてある');
   down('BracketLeft'); // @(Pの隣)=ABCモード入り(英数=OS切替・F11=デスクトップ表示に取られる)
   assert(el('mode').textContent === 'A', 'ABCモードのバッジ(@)');
   down('KeyH', { key: 'h' }); down('KeyT', { key: 't' }); down('KeyT', { key: 't' }); down('KeyP', { key: 'p' });

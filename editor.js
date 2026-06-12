@@ -1820,8 +1820,10 @@ function render() {
   const chartsEl = document.getElementById('charts');
   const showChart = tut || chartOn; // 練習中は強制表示、それ以外は盤ボタンの設定(縦書きでも出せる)
   if (chartsEl && chartsEl.style) chartsEl.style.display = showChart ? '' : 'none';
-  if (typeof document.body?.classList?.toggle === 'function')
+  if (typeof document.body?.classList?.toggle === 'function') {
     document.body.classList.toggle('with-chart', showChart); // 縦書きのページサイズ計算に反映
+    document.body.classList.toggle('abc', abcMode); // ABCモードの可視化(盤がアルファベット表示+本文に色)
+  }
   const el = document.getElementById('text');
   if (tut) { renderTut(el); return; }
   if (calib) {
@@ -2007,6 +2009,8 @@ function buildCharts(layout) {
         `<span class="${cls(bottom, 'kana')}">${bottom}</span>` +
         `<span class="label">${label}</span></div>`;
     }
+    if (r === 0) html += '<div class="key fnkey" data-code="BracketLeft"><span class="kana">@</span><span class="label">ABC</span></div>'; // Pの隣=ABCトグル
+    if (r === 1) html += '<div class="key fnkey" data-code="Quote"><span class="kana">：</span><span class="label">開く</span></div>'; // ;の隣=表記を開く
     if (r === 2) html += '<div class="key shiftkey" data-code="ShiftRight"><span class="kana">⇧</span><span class="label">Shift</span></div>';
     html += '</div>';
   }
