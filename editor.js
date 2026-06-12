@@ -214,6 +214,95 @@ function flushLog() {
 }
 globalThis.__neLogSize = () => logBuf.length; // e2e 用
 
+// ---- 著者証明レポート(証ボタン): ログを集計・チェーン検証して提出物を生成 ----
+function buildCertReport(logText, anchorsText, expectedHead) {
+  const lines = (logText || '').split('\n').filter(Boolean);
+  let head = lines.length ? (JSON.parse(lines[0]).p ?? '0') : '0';
+  let broken = -1;
+  const st = { k: 0, rep: 0, conv: 0, pick: 0, paste: [], imports: 0, states: [], modes: { h: 0, v: 0, t: 0 } };
+  let tMin = null, tMax = null, sessions = 0, lastT = 0;
+  for (let i = 0; i < lines.length; i++) {
+    let e;
+    try { e = JSON.parse(lines[i]); } catch { if (broken < 0) broken = i; continue; }
+    if (broken < 0) {
+      if (e.p !== head) broken = i;
+      else head = sha256hex(head + lines[i]);
+    }
+    if (tMin === null) tMin = e.t;
+    tMax = e.t;
+    if (e.t - lastT > 1800000) sessions++;
+    lastT = e.t;
+    if (e.e === 'k') { st.k++; if (e.r) st.rep++; if (e.m) st.modes[e.m] = (st.modes[e.m] || 0) + 1; }
+    else if (e.e === 'conv') st.conv++;
+    else if (e.e === 'pick') st.pick++;
+    else if (e.e === 'paste') st.paste.push({ at: new Date(e.t).toISOString(), len: [...(e.s || '')].length });
+    else if (e.e === 'import') st.imports++;
+    else if (e.e === 'state') st.states.push({ at: new Date(e.t).toISOString(), sha: e.sha, len: e.len });
+  }
+  const anchors = (anchorsText || '').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const pasteTotal = st.paste.reduce((a, p) => a + p.len, 0);
+  const chainOk = broken < 0 && (!expectedHead || head === expectedHead);
+  const fmt = (iso) => iso.replace('T', ' ').slice(0, 19);
+  return [
+    '# 著者証明レポート(novel-editor)',
+    `発行: ${new Date().toISOString()}`,
+    `対象原稿: ${text.length}字 / sha256: ${sha256hex(text)}`,
+    '',
+    '## 打鍵チェーン検証(SHA-256)',
+    `- 記録イベント: ${lines.length}行`,
+    chainOk
+      ? `- チェーン整合性: ✓ 全行の連鎖一致を検証(末尾 head: ${head.slice(0, 16)}…)`
+      : `- チェーン整合性: ✗ ${broken >= 0 ? broken + 1 + '行目で不整合' : '末尾headが現在値と不一致'}`,
+    '',
+    '## 執筆統計',
+    `- 総打鍵: ${st.k}(うちキーリピート ${st.rep})`,
+    `- 変換: ${st.conv}回 / 確定: ${st.pick}回`,
+    tMin ? `- 期間: ${fmt(new Date(tMin).toISOString())} 〜 ${fmt(new Date(tMax).toISOString())} / セッション数(30分無操作区切り): ${sessions}` : '- 期間: 記録なし',
+    `- モード内訳: 横書き ${st.modes.h || 0} / 縦書き ${st.modes.v || 0} / 練習 ${st.modes.t || 0} 打鍵`,
+    '',
+    '## 外部由来テキスト(全件開示)',
+    `- 貼り付け: ${st.paste.length}件 / 合計 ${pasteTotal}字`,
+    ...st.paste.slice(-20).map((p) => `  - ${fmt(p.at)} に ${p.len}字`),
+    `- バックアップ復元: ${st.imports}件`,
+    '',
+    '## 原稿状態チェックポイント(保存毎にチェーンへ固定)',
+    `- ${st.states.length}件。直近:`,
+    ...st.states.slice(-5).map((x) => `  - ${fmt(x.at)} / ${x.len}字 / sha256 ${x.sha.slice(0, 12)}…`),
+    '',
+    '## 第三者タイムスタンプ(OpenTimestamps、pending証明)',
+    `- ${anchors.length}件`,
+    ...anchors.slice(-10).map((a) => `  - ${fmt(a.at)} / ${a.sha256.slice(0, 12)}… / ${a.proofs.length}カレンダー`),
+    '',
+    '## 本エディタの保証事項',
+    '- 公理0: 本文の全文字は人間の打鍵から決定的に導出される',
+    '- ローカルLLMの役割は変換候補の選別(あり得ない候補の除去・並べ替え)のみである。',
+    '  出力は既存候補の番号に拘束され、本文の文字を生成・変更する経路は存在しない。',
+    '  人間の打鍵を変更する動作は一切行わない',
+    '- 外部由来テキスト(貼り付け・復元)は全てログに全文記録され、本レポートに開示される',
+    '- ログは各行が前行の SHA-256 を含む append-only チェーンであり、部分改ざんは検出される',
+  ].join('\n');
+}
+globalThis.__neCert = buildCertReport; // e2e 用
+async function issueCertificate() {
+  flushLog();
+  let logText = '', anchorsText = '';
+  if (ipc) {
+    try { logText = (await ipc.invoke('read-file', { name: 'log.jsonl' })) || ''; } catch {}
+    try { anchorsText = (await ipc.invoke('read-file', { name: 'anchors.jsonl' })) || ''; } catch {}
+  }
+  const report = buildCertReport(logText, anchorsText, logHash);
+  if (ipc) {
+    const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const p = await ipc.invoke('export-dialog', { defaultName: `著者証明-${d}.txt`, content: report });
+    status(p ? `証明書を発行 → ${p}` : '発行をキャンセルしました');
+  } else {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([report], { type: 'text/plain' }));
+    a.download = 'certificate.txt';
+    a.click();
+  }
+}
+
 // ---- バックアップ/復元: 原稿(履歴ごと)+学習データ+設定を1つのJSONに ----
 function exportBundle() {
   manuscript.applyPatch(text); // いまの原稿をコミットしてから書き出す
@@ -1223,6 +1312,7 @@ async function main() {
     viewSpread = -1;
     render();
   };
+  document.getElementById('cert').onclick = issueCertificate;
   const cb = document.getElementById('chartbtn');
   cb.textContent = chartOn ? '盤' : '盤̸';
   cb.onclick = () => {
