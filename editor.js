@@ -457,10 +457,10 @@ async function toWav16k(arrayBuf) {
   new Int16Array(buf, 44).set(pcm);
   return buf;
 }
-function voiceInsert(t, sha) {
+function voiceInsert(t, sha, extra) {
   if (mode === 'CAND') confirmCand();
   snap(true);
-  logEvt('stt', { sha, s: t }); // 書き起こし全文をチェーンに(音声shaと紐づく)
+  logEvt('stt', { sha, s: t, ...(extra || {}) }); // 最終文+raw/かな の三層を記録(監査可能)
   text = text.slice(0, cursor) + t + text.slice(cursor);
   cursor += t.length;
   committedTo = cursor;
@@ -469,6 +469,41 @@ function voiceInsert(t, sha) {
   render();
 }
 globalThis.__neVoice = voiceInsert; // e2e 用
+// 自分の語彙(確定学習+自動登録)を whisper のバイアス用に
+function ownSurfaces() {
+  const set = new Set();
+  for (const m of [userDict, autoDict]) for (const o of Object.values(m)) for (const s2 of Object.keys(o)) set.add(s2);
+  return [...set].slice(0, 40).join('、');
+}
+// 音声パイプライン: whisper出力 → LLMで全ひらがな化 → 文節ごとに自前変換(辞書・開き癖が効く)
+async function voicePipeline(raw, sha) {
+  let kana = null;
+  try {
+    const r = await fetch(LLM_URL + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: `次の文を、句読点・記号はそのままに、すべてひらがなに直してください。説明不要、結果のみ。\n文:「${raw}」\n結果:` }],
+        temperature: 0, max_tokens: 400,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    kana = ((await r.json()).choices[0].message.content || '').replace(/[「」\s]/g, '').trim();
+    if (!/^[ぁ-んー。、！？…―()（）]+$/.test(kana)) kana = null; // かな化に失敗していたら使わない
+  } catch {}
+  if (!kana) { voiceInsert(raw, sha, { raw }); return; } // フォールバック: whisper出力をそのまま
+  // 文節ごとに自前ラティスで表記を決める(自分の辞書・固有名詞・開き癖が効く)
+  const parts = kana.split(/([。、！？…―]+)/);
+  let outText = '';
+  for (const p2 of parts) {
+    if (!p2) continue;
+    if (!/^[ぁ-んー]+$/.test(p2)) { outText += p2; continue; }
+    const best = latticeBest(p2, 1)[0];
+    outText += best ? best.out : p2;
+  }
+  voiceInsert(outText, sha, { raw, kana });
+}
+globalThis.__neVoicePipe = voicePipeline; // e2e 用
 async function handleVoice(blob, dur) {
   const buf = await blob.arrayBuffer();
   const b64 = abToB64(buf);
@@ -482,9 +517,11 @@ async function handleVoice(blob, dur) {
     const fd = new FormData();
     fd.append('file', new Blob([wav], { type: 'audio/wav' }), 'a.wav');
     fd.append('response_format', 'json');
+    const bias = ownSurfaces();
+    if (bias) fd.append('prompt', bias); // 自分の固有名詞でwhisperをバイアス
     const r = await fetch(WHISPER_URL + '/inference', { method: 'POST', body: fd, signal: AbortSignal.timeout(120000) });
     const t = ((await r.json()).text || '').replace(/\s+/g, '').trim();
-    if (t) voiceInsert(t, sha);
+    if (t) await voicePipeline(t, sha);
     else status('書き起こし結果が空でした');
   } catch { status('書き起こし失敗(whisper起動待ちの可能性)'); }
 }
@@ -808,6 +845,49 @@ async function llmHarvest() {
   } catch {}
 }
 
+// ---- 自動登録辞書の定期整理: LLMが誤読み・断片・一般語の汚れを棚卸し(1日1回) ----
+async function llmCurate(force) {
+  if (!llmReady || !llmOn || tut) return [];
+  const today = new Date().toISOString().slice(0, 10);
+  if (!force && localStorage.getItem('ne:lastCurateDay') === today) return [];
+  const entries = [];
+  for (const [yomi, m] of Object.entries(autoDict)) for (const surf of Object.keys(m)) entries.push([yomi, surf]);
+  if (!entries.length) return [];
+  const batch = entries.slice(0, 40);
+  const prompt = `小説用の固有名詞辞書の棚卸しです。以下の項目のうち、明らかな誤り(読みと表記の不一致・意味のない断片・固有名詞でない一般語)の番号だけをカンマ区切りで挙げてください。問題なければ「なし」。\n${batch.map(([y, s2], i) => `${i + 1}. ${s2}(読み: ${y})`).join('\n')}\n番号:`;
+  try {
+    const r = await fetch(LLM_URL + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 60 }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const content = (await r.json()).choices[0].message.content;
+    const removed = [];
+    if (!content.includes('なし')) {
+      for (const k of (content.match(/\d+/g) || []).map(Number)) {
+        const ent = batch[k - 1];
+        if (!ent) continue;
+        const [y, s2] = ent;
+        if (autoDict[y]?.[s2] !== undefined) {
+          delete autoDict[y][s2];
+          if (!Object.keys(autoDict[y]).length) delete autoDict[y];
+          removed.push(`${s2}(${y})`);
+        }
+      }
+    }
+    localStorage.setItem('ne:lastCurateDay', today);
+    if (removed.length) {
+      localStorage.setItem('ne:autoDict', JSON.stringify(autoDict));
+      rebuildSelfPred();
+      logEvt('curate', { rm: removed });
+      status(`辞書整理: ${removed.length}件を除去(${removed.slice(0, 3).join('、')}${removed.length > 3 ? '…' : ''})`);
+    }
+    return removed;
+  } catch { return []; }
+}
+globalThis.__neCurate = llmCurate; // e2e 用
+
 // 後置変換: 本文末尾のかな列から「辞書に当たる最長 suffix」を対象に変換する(前置マーク廃止)
 function hasCands(y) {
   return (
@@ -845,6 +925,8 @@ function wordCands(sub) {
   const res = [];
   const u = userDict[sub];
   if (u) Object.entries(u).sort((a, b) => b[1] - a[1]).slice(0, 2).forEach(([s2]) => res.push([s2, 60]));
+  const a2 = autoDict[sub];
+  if (a2) Object.entries(a2).sort((x, y) => y[1] - x[1]).slice(0, 2).forEach(([s2]) => res.push([s2, 90])); // 自動登録の固有名詞
   (dict[sub] || []).slice(0, 2).forEach(([s2]) => res.push([s2, 160]));
   (baseDict[sub] || []).slice(0, 3).forEach(([s2, c]) => res.push([s2, c]));
   const seen = new Set();
@@ -1724,6 +1806,7 @@ async function main() {
     if (ipc) ipc.invoke('save-file', { name: 'backup-auto.json', content: exportBundle() }).catch(() => {});
   }, 300000);
   setInterval(llmHarvest, 60000); // 1分ごとに固有名詞の採取
+  setTimeout(() => llmCurate(false), 40000); // 起動後に1日1回の辞書棚卸し
   setInterval(flushLog, 30000); // 打鍵ログの書き出し
   setTimeout(() => anchorNow(false), 20000); // 起動後に当日分の公証
   setInterval(() => anchorNow(false), 3600000); // 1時間ごとに「今日まだなら」公証

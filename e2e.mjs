@@ -49,6 +49,12 @@ globalThis.fetch = async (p, opts = {}) => {
     if (url.endsWith('/health')) return { json: async () => ({ status: 'ok' }) };
     // /v1/chat/completions: 審査員 or 採取の偽応答
     const pr = JSON.parse(opts.body).messages[0].content;
+    if (pr.includes('棚卸し')) {
+      return { json: async () => ({ choices: [{ message: { content: llmStub.curateReply || 'なし' } }] }) };
+    }
+    if (pr.includes('すべてひらがなに直して')) {
+      return { json: async () => ({ choices: [{ message: { content: llmStub.kanaReply || '' } }] }) };
+    }
     if (pr.includes('品詞を、次から一語')) {
       return { json: async () => ({ choices: [{ message: { content: llmStub.posReply || '固有名詞' } }] }) };
     }
@@ -756,6 +762,31 @@ ok('右クリック登録(読み+品詞特定)');
   assert(cert46.includes('音声入力'), '証明書に音声入力の開示欄');
 }
 ok('音声入力(挿入・チェーン記録・証明書開示)');
+
+// ---- 47. 音声パイプライン(かな化→自前ラティス変換) ----
+{
+  down('Enter');
+  llmStub.kanaReply = 'まほうじんがひかる。';
+  const sha47 = globalThis.__neSha('voice-2');
+  await globalThis.__neVoicePipe('魔砲陣ガ光ル。', sha47); // whisperが表記を外した想定
+  assert(plain().includes('魔法陣'), `自前変換で自分の語彙に直る: ${plain().slice(-12)}`);
+  const stt47 = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'stt').pop();
+  assert(stt47.raw === '魔砲陣ガ光ル。' && stt47.kana === 'まほうじんがひかる。', 'raw/かな/最終の三層が記録される');
+}
+ok('音声パイプライン(whisper→かな化→ラティス)');
+
+// ---- 48. 自動登録辞書のLLM棚卸し ----
+{
+  llmStub.curateReply = '1';
+  const removed = await globalThis.__neCurate(true);
+  assert(removed.length === 1, `棚卸しで1件除去: ${removed.join()}`);
+  const cu = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'curate').pop();
+  assert(cu && cu.rm.length === 1, '整理がチェーンに記録される');
+  llmStub.curateReply = 'なし';
+  const removed2 = await globalThis.__neCurate(true);
+  assert(removed2.length === 0, '「なし」なら何も消えない');
+}
+ok('辞書棚卸し(LLM・userDictは不可侵)');
 
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
