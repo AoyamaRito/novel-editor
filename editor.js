@@ -45,6 +45,7 @@ let committedTo = 0; // 未確定領域の開始。committedTo..cursor の末尾
 let cursor = 0; // 挿入位置(キャレット)。クリック/矢印で移動できる
 let selfPred = [];   // 予測用: 自分の語彙(コーパス+確定学習)の [読み, スコア]
 let convRestore = ''; // 変換キャンセル時に戻す文字列(予測変換では打った分だけ戻す)
+let symJump = 0; // 句読点を透かして変換した時、確定後にカーソルを記号の後ろへ戻す量
 let candPaths = null; // ラティス候補の分割情報(確定学習用)。従来型候補のときは null
 let closers = []; // 自動閉じカッコ(キャレットの後ろに予約表示、本文はその手前に入る)
 let tategaki = localStorage.getItem('ne:tate') === 'on';
@@ -538,7 +539,17 @@ function henkan() {
     render();
     return;
   }
-  const m = (tut ? src : src.slice(committedTo, cursor)).match(/[ぁ-んー]+$/); // 未確定領域だけが変換対象
+  let m = (tut ? src : src.slice(committedTo, cursor)).match(/[ぁ-んー]+$/); // 未確定領域だけが変換対象
+  if (!m && !tut) {
+    // 句読点の後からでも直前のかな列を変換できるように、記号列を透かす(IMEの手癖)
+    const m2 = text.slice(0, cursor).match(/([ぁ-んー]+)([。、！？…―」』）]{1,6})$/);
+    if (m2) {
+      symJump = m2[2].length;
+      cursor -= symJump;
+      committedTo = Math.min(committedTo, cursor);
+      m = [m2[1]];
+    }
+  }
   if (!m) return;
   const run = m[0];
   let exact = null;
@@ -603,6 +614,7 @@ function confirmCand() {
   rebuildSelfPred(); // 確定学習を予測にも即反映
   logEvt('pick', { y: reading, s: surf, i: candIdx });
   mode = 'NONE'; reading = ''; candPaths = null;
+  const jumpBack = symJump; symJump = 0; // 透かした記号の後ろへ復帰(out の後で)
   const isPair = !tut && surf.length === 2 && PAIR[surf[0]] === surf[1]; // 「」等はカーソルを中に
   const insert = isPair ? surf[0] : surf;
   if (!tut && insert !== '') {
@@ -612,6 +624,7 @@ function confirmCand() {
   }
   if (isPair) closers.push(surf[1]);
   out(insert);
+  if (jumpBack && !tut) { cursor += jumpBack; }
   if (!tut) committedTo = cursor; // 変換の決定=確定
   snd.conv();
 }
@@ -620,6 +633,7 @@ function cancel() {
     const r = convRestore || reading;
     mode = 'NONE'; reading = ''; convRestore = ''; candPaths = null;
     out(r);
+    if (symJump) { cursor += symJump; committedTo = cursor; symJump = 0; }
   }
   render();
 }
@@ -814,7 +828,8 @@ function tutHint() {
 // ---- キーイベント(配列デコード。シフト面=Shiftキー、判定窓なし) ----
 function onKeydown(e) {
   const code = e.code;
-  if (!e.repeat) logEvt('k', { c: code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h' });
+  if (!e.repeat || code === 'Backspace')
+    logEvt('k', { c: code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h', ...(e.repeat ? { r: 1 } : {}) });
   document.querySelectorAll(`[data-code="${code}"]`).forEach((k) => k.classList.add('hit'));
   statusKey(code);
 
@@ -1188,7 +1203,7 @@ async function main() {
     if (!window.confirm('カーソルをここに移動して書きますか?')) return;
     moveCursor(p);
     const midLine = cursor > 0 && text[cursor - 1] !== '\n' && cursor < text.length && text[cursor] !== '\n';
-    if (midLine && window.confirm('改行を入れてから書きますか?')) { logEvt('ins', { s: '\\n' }); out('\n'); }
+    if (midLine && window.confirm('改行を入れてから書きますか?')) { logEvt('ins', { s: '\n' }); out('\n'); }
     render();
   });
   // システムIMEがONだと打鍵がOSに横取りされる → 検知して警告

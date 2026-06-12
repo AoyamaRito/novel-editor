@@ -76,3 +76,4 @@ node e2e.mjs   # 偽DOM+偽llama-server上で keydown列→描画を検証
 - 著者証明: log.jsonl は SHA-256 ハッシュチェーン(paste/import/移動も全記録)、原稿状態の sha256 を保存毎にチェーンへ固定。
   anchors.jsonl は OpenTimestamps カレンダーの **pending 証明**(標準 .ots 形式での第三者検証導線は未整備=次フェーズ)。
   「カレンダー応答を当日中に取得した」ことの記録であり、Bitcoin ブロックへの確定検証はまだ主張しない
+- 注意: ブラウザ実行(非Electron)では log.jsonl を書けないためチェーン head だけが進む。証明用途は Electron 実行が前提

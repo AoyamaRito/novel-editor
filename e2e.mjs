@@ -547,6 +547,26 @@ await wait(30);
 assert(globalThis.__neLogAll().some((l) => JSON.parse(l).e === 'state'), 'saveで原稿状態(sha256)がチェーンに固定される');
 ok('監査強化(SHA-256一致・paste/mv/state記録)');
 
+// ---- 33c. 句読点の後からの変換(透かし変換) ----
+down('Enter'); down('Enter');
+llmStub.reply = '1';
+await typeWord('かみ');
+await type('。');
+down('Space'); // 。の後からでも直前のかなが変換対象になる
+const candP = html().match(/class="cand">▼([^<]*)</)?.[1];
+assert(candP === '髪', `句読点透かし変換: ${candP}`);
+down('Enter');
+assert(plain().endsWith('髪。'), `確定後は記号の後ろへ: ${plain().slice(-4)}`);
+await typeWord('か');
+assert(plain().endsWith('髪。か'), 'カーソルが。の後ろに復帰している');
+down('Backspace');
+// Backspace リピートは実行もログもされる
+const lgr0 = globalThis.__neLogSize();
+down('Backspace', { repeat: true });
+const lastR = JSON.parse(globalThis.__neLogLast());
+assert(lastR.e === 'k' && lastR.r === 1, 'リピートBackspaceが r:1 でログに乗る');
+ok('句読点透かし変換+リピート記録');
+
 // ---- 34. 公証(OpenTimestamps)の安全動作 ----
 await globalThis.__neAnchor(true); // ipc 無し環境では静かにスキップ(例外を出さない)
 assert(true, 'anchorNow はブラウザ/テスト環境で安全');
