@@ -428,6 +428,7 @@ async function issueCertificate() {
 }
 
 // ---- 音声入力(同梱 whisper.cpp): 声のログ=生体証拠としても保存 ----
+const VOICE_UI = false; // 音声入力はいったん休眠(精度が実用域に達したら true に戻す)。内部実装とテストは温存
 const WHISPER_URL = 'http://127.0.0.1:18436';
 let rec = null, recChunks = [], recStart = 0;
 function updateMicBtn() {
@@ -1360,7 +1361,7 @@ function tutHint() {
 // ---- キーイベント(配列デコード。シフト面=Shiftキー、判定窓なし) ----
 function onKeydown(e) {
   const code = e.code;
-  if (code === 'MetaLeft' && !e.repeat && !rec && !tut) { micToggle(true); return; } // 左Cmd長押し=プッシュトゥトーク(声合わせ中も有効)
+  if (VOICE_UI && code === 'MetaLeft' && !e.repeat && !rec && !tut) { micToggle(true); return; } // 左Cmd長押し=プッシュトゥトーク(休眠中)
   if (code === 'Escape' && calib) { calib = null; render(); status('声合わせを終了しました'); return; }
   if (rec && rec._ptt && code !== 'MetaLeft') rec._cancel = true; // 他キーが来た=ショートカットだった→破棄
   if (!e.repeat || code === 'Backspace')
@@ -1825,9 +1826,14 @@ async function main() {
   };
   document.getElementById('cert').onclick = issueCertificate;
   const micBtn = document.getElementById('mic');
-  if (micBtn) micBtn.onclick = () => micToggle(false);
   const calBtn = document.getElementById('vcal');
-  if (calBtn) calBtn.onclick = startCalib;
+  const micSel2 = document.getElementById('micsel');
+  if (!VOICE_UI) { // 音声UIは休眠中
+    for (const b of [micBtn, calBtn, micSel2]) if (b && b.style) b.style.display = 'none';
+  } else {
+    if (micBtn) micBtn.onclick = () => micToggle(false);
+    if (calBtn) calBtn.onclick = startCalib;
+  }
   const micSel = document.getElementById('micsel');
   if (micSel) micSel.onchange = (ev) => { localStorage.setItem('ne:micId', ev.target.value); status('マイクを切り替えました'); };
   populateMics();

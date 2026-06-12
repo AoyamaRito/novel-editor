@@ -128,7 +128,7 @@ app.whenReady().then(() => {
     try { systemPreferences.askForMediaAccess('microphone'); } catch {} // マイク権限の正式要求(音声入力用)
   }
   startLlm();
-  startWhisper();
+  // startWhisper(); // 音声入力は休眠中(editor.js の VOICE_UI と対で再開)
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
