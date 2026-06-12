@@ -153,6 +153,47 @@ function flushLog() {
 }
 globalThis.__neLogSize = () => logBuf.length; // e2e 用
 
+// ---- バックアップ/復元: 原稿(履歴ごと)+学習データ+設定を1つのJSONに ----
+function exportBundle() {
+  manuscript.applyPatch(text); // いまの原稿をコミットしてから書き出す
+  localStorage.setItem('ne:graph', JSON.stringify(graph.toJSON()));
+  return JSON.stringify({
+    app: 'novel-editor', v: 1, at: new Date().toISOString(),
+    graph: graph.toJSON(),
+    userDict, autoDict, observed,
+    settings: {
+      tate: tategaki ? 'on' : 'off',
+      sound: soundOn ? 'on' : 'off',
+      llm: llmOn ? 'on' : 'off',
+      chart: chartOn ? 'on' : 'off',
+      tutStage: localStorage.getItem('ne:tutStage') || '0',
+    },
+    logHash, lastScanLen,
+  });
+}
+function importBundle(json) {
+  const b = JSON.parse(json);
+  if (b.app !== 'novel-editor') throw new Error('not a backup');
+  graph = Graph.fromJSON(b.graph || []);
+  manuscript = graph.get('novel:manuscript');
+  if (!manuscript) { manuscript = new Block({ id: 'novel:manuscript', type: 'text' }); graph.add(manuscript); }
+  text = manuscript.content || '';
+  cursor = text.length; committedTo = cursor; closers = []; mode = 'NONE'; reading = '';
+  userDict = b.userDict || {}; autoDict = b.autoDict || {}; observed = b.observed || {};
+  logHash = b.logHash || logHash; lastScanLen = b.lastScanLen || 0;
+  localStorage.setItem('ne:graph', JSON.stringify(graph.toJSON()));
+  localStorage.setItem('ne:userDict', JSON.stringify(userDict));
+  localStorage.setItem('ne:autoDict', JSON.stringify(autoDict));
+  localStorage.setItem('ne:observed', JSON.stringify(observed));
+  localStorage.setItem('ne:logHash', logHash);
+  localStorage.setItem('ne:lastScanLen', String(lastScanLen));
+  for (const [k, v] of Object.entries(b.settings || {})) localStorage.setItem('ne:' + (k === 'tutStage' ? 'tutStage' : k), v);
+  rebuildSelfPred();
+  render();
+}
+globalThis.__neExport = exportBundle; // e2e 用
+globalThis.__neImport = importBundle;
+
 // ---- コピペ(Electron clipboard。選択範囲は未実装なのでコピーは全文) ----
 const eClipboard = typeof window !== 'undefined' && window.require ? window.require('electron').clipboard : null;
 function pasteText(raw) {
@@ -1104,11 +1145,40 @@ async function main() {
   lb.onclick = () => { llmOn = !llmOn; localStorage.setItem('ne:llm', llmOn ? 'on' : 'off'); updateLlmBtn(); };
   updateLlmBtn();
   llmInit();
-  document.getElementById('export').onclick = () => {
+  document.getElementById('export').onclick = async () => {
+    if (ipc) {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const name = `manuscript-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+      const p = await ipc.invoke('save-file', { name, content: text });
+      status(`txt書き出し → ${p}`);
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      a.download = 'manuscript.txt';
+      a.click();
+    }
+  };
+  document.getElementById('exp-json').onclick = () => {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-    a.download = 'manuscript.txt';
+    a.href = URL.createObjectURL(new Blob([exportBundle()], { type: 'application/json' }));
+    a.download = 'novel-editor-backup.json';
     a.click();
+    status('バックアップJSONを書き出しました(原稿履歴+学習+設定)');
+  };
+  const fi = document.getElementById('imp-file');
+  document.getElementById('imp-json').onclick = () => fi.click?.();
+  if (fi) fi.onchange = (ev) => {
+    const f = ev.target.files?.[0];
+    if (!f) return;
+    if (!window.confirm('現在の原稿と学習データをバックアップの内容に置き換えます。よろしいですか?')) { fi.value = ''; return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      try { importBundle(rd.result); status('バックアップから復元しました'); }
+      catch { status('復元失敗: novel-editor のバックアップではありません'); }
+      fi.value = '';
+    };
+    rd.readAsText(f);
   };
   const sel = document.getElementById('tut-stage');
   sel.innerHTML = STAGES.map((s, i) => `<option value="${i}">${i + 1}. ${s.name}</option>`).join('');

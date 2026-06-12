@@ -517,5 +517,16 @@ el('chartbtn').onclick();
 assert(localStorage.getItem('ne:chart') === 'on', '盤ONに戻る');
 ok('配列チャート表示オプション');
 
+// ---- 33. バックアップJSONの往復 ----
+const bundle = globalThis.__neExport();
+const parsed = JSON.parse(bundle);
+assert(parsed.app === 'novel-editor' && parsed.graph && parsed.userDict, 'バックアップに原稿+学習が入っている');
+const before33 = plain();
+await typeWord('あああ');
+down('Enter');
+globalThis.__neImport(bundle);
+assert(plain() === before33, `復元で原稿が巻き戻る: ${JSON.stringify(plain().slice(-6))}`);
+ok('バックアップJSONの書き出し/復元');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
