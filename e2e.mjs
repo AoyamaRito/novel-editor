@@ -364,7 +364,7 @@ down('Space');
 const pair1 = html().match(/class="cand">▼([^<]*)</)?.[1];
 assert(pair1 === '「」', `候補に「」が並ぶ: ${pair1}`);
 down('Enter'); // 「」で確定 → カーソルは中
-assert(plain().endsWith('「') && html().includes('class="closers"'), '開きが入り閉じは予約');
+assert(plain().endsWith('「」') && html().includes('caret"></span>」'), '「」が実体で入りカーソルは中');
 down('Enter'); // 閉じ実体化
 assert(plain().endsWith('「」'), '……→「」変換の完成');
 await type('…');
@@ -377,23 +377,27 @@ down('AltLeft');
 assert(plain().endsWith('――'), 'キャンセルで――のまま');
 ok('……=記号変換の入口(――/「」/逆方向)');
 
-// ---- 19d. 自動閉じカッコ(間にカーソル)。」は直接キーを持たない(自動閉じ+…変換で出す) ----
+// ---- 19d. 自動閉じカッコ(実体で即挿入・カーソルは中)。」は直接キーを持たない ----
 down('Enter');
 await type('「');
-assert(html().includes('class="closers"') && html().includes('」'), '「で閉じが予約表示される');
-assert(!plain().endsWith('」'), '本文にはまだ」が入っていない');
+assert(plain().endsWith('「」'), '「で閉じも実体で入る');
+assert(html().includes('caret"></span>」'), 'カーソルは中');
 await typeWord('かな');
-down('Enter'); // かな確定+閉じ実体化
-assert(plain().endsWith('「かな」'), `Enterで閉じ実体化: ${plain().slice(-6)}`);
-assert(!html().includes('class="closers"'), '予約が消化された');
+down('Enter'); // かな確定+閉じの外へ
+assert(plain().endsWith('「かな」'), `Enterで閉じの外へ: ${plain().slice(-6)}`);
+assert(!html().includes('caret"></span>」'), 'カーソルが」の後ろに出た');
+// 直後のBackspaceはペアごと削除
+await type('「');
+assert(plain().endsWith('「」'), 'ペア挿入');
+down('Backspace');
+assert(plain().endsWith('「かな」'), `Backspaceでペアごと消える: ${plain().slice(-6)}`);
 // 変換でペア: かっこ→『』、カーソルは中
 await typeWord('かっこ');
 down('Space');
 const pairCand = html().match(/class="cand">▼([^<]*)</)?.[1];
 assert(['『』','（）','「」'].includes(pairCand), `ペア候補: ${pairCand}`);
 down('Enter');
-assert(plain().endsWith(pairCand[0]), 'открыき側だけ本文に入りカーソルは中');
-assert(html().includes(pairCand[1]), '閉じは予約表示');
+assert(plain().endsWith(pairCand) && html().includes(`caret"></span>${pairCand[1]}`), '閉じも実体・カーソルは中');
 down('Enter'); // 閉じ実体化
 assert(plain().endsWith(pairCand), '確定でペア完成');
 ok('自動閉じカッコ+かっこ変換');
@@ -404,7 +408,7 @@ await typeWord('かな');
 assert(/\n　かな$/.test(plain()), `地の文は自動字下げ: ${JSON.stringify(plain().slice(-4))}`);
 down('Enter'); down('Enter');
 await type('「');
-assert(/\n「$/.test(plain()), 'セリフ行は字下げしない');
+assert(/\n「」$/.test(plain()), 'セリフ行は字下げしない');
 await typeWord('なに');
 await type('！');
 await typeWord('かな');

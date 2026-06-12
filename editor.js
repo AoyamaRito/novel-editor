@@ -53,7 +53,7 @@ let lastQuery = ''; // 検索
 let posDict = JSON.parse(localStorage.getItem('ne:posDict') || '{}'); // 手動登録語の品詞(読み\t表記 -> 品詞)
 let followCaret = true, progScroll = false, wheelAcc = 0; // スクロール追従の解放
 let candPaths = null; // ラティス候補の分割情報(確定学習用)。従来型候補のときは null
-let closers = []; // 自動閉じカッコ(キャレットの後ろに予約表示、本文はその手前に入る)
+let closers = []; // 自動閉じカッコ(実体で即挿入済み。スタックは「Enterで飛び越える数」と削除道連れの管理)
 let tategaki = localStorage.getItem('ne:tate') === 'on';
 let chartOn = localStorage.getItem('ne:chart') !== 'off';
 let viewSpread = -1; // -1=最終見開きに追従
@@ -219,6 +219,21 @@ function out(s) {
   if (!/^[ぁ-んー]+$/.test(s)) committedTo = cursor; // 記号・改行・漢字は打った時点で確定
 }
 
+// 実体の閉じカッコを飛び越える(。」の句点はここでも落とす)
+function closeOver(n) {
+  for (let i = 0; i < n && closers.length; i++) {
+    const ch = closers[closers.length - 1];
+    closers.pop();
+    if (text[cursor] !== ch) continue; // 実体が編集で消えていたら予約だけ破棄
+    if ('」』）'.includes(ch) && text.slice(0, cursor).endsWith('。')) {
+      text = text.slice(0, cursor - 1) + text.slice(cursor);
+      cursor--;
+    }
+    cursor++;
+  }
+  committedTo = cursor;
+}
+
 // ---- Undo/Redo: 打鍵の節目ごとに状態スナップショット ----
 function snap(force) {
   if (tut) return;
@@ -248,11 +263,11 @@ function redo() {
   logEvt('redo', { sha: sha256hex(text), len: text.length });
 }
 
-// カーソル移動: 未確定と予約閉じを片付けてから動く(置き去り事故防止)
+// カーソル移動: 未確定を確定してから動く(閉じは実体済みなのでスタックだけ畳む)
 function moveCursor(p) {
   if (tut) return;
   if (mode === 'CAND') cancel();
-  while (closers.length) out(closers.pop());
+  closers = [];
   committedTo = cursor;
   cursor = Math.max(0, Math.min(text.length, p));
   committedTo = cursor;
@@ -1236,8 +1251,11 @@ function confirmCand() {
     clearTimeout(lastConvTimer);
     lastConvTimer = setTimeout(render, 1250);
   }
-  if (isPair) closers.push(surf[1]);
   out(insert);
+  if (isPair) {
+    closers.push(surf[1]); // 閉じも実体で即挿入(カーソルは中)
+    text = text.slice(0, cursor) + surf[1] + text.slice(cursor);
+  }
   if (jumpBack && !tut) { cursor += jumpBack; }
   if (!tut) committedTo = cursor; // 変換の決定=確定
   snd.conv();
@@ -1269,11 +1287,14 @@ function emit(ch) {
       }
     }
   } else {
-    if (!tut) {
-      if (PAIR[ch]) closers.push(PAIR[ch]); // 開き→閉じを予約
-      else if (closers.length && closers[closers.length - 1] === ch) closers.pop(); // 閉じは予約を消化
-    }
-    out(ch);
+    if (!tut && PAIR[ch]) {
+      out(ch);
+      closers.push(PAIR[ch]); // 閉じも実体で即挿入(カーソルは中)。Enterで飛び越える
+      text = text.slice(0, cursor) + PAIR[ch] + text.slice(cursor);
+    } else if (!tut && closers.length && closers[closers.length - 1] === ch && text[cursor] === ch) {
+      snap(false);
+      closeOver(1); // 閉じ字が候補から来たら実体を飛び越える(二重挿入しない)
+    } else out(ch);
   }
   if (!tut && mode === 'NONE') kickSpeculate(); // 入力中じゅう、最新の読みで裏審査が追走する
   render();
@@ -1285,7 +1306,10 @@ function backspace() {
   snap(false);
   followCaret = true;
   const lastCh = text.slice(cursor - 1, cursor);
-  if (PAIR[lastCh] && closers[closers.length - 1] === PAIR[lastCh]) closers.pop();
+  if (PAIR[lastCh] && closers[closers.length - 1] === PAIR[lastCh] && text[cursor] === PAIR[lastCh]) {
+    closers.pop();
+    text = text.slice(0, cursor) + text.slice(cursor + 1); // 実体の閉じも道連れ
+  }
   const delN = text.slice(cursor - 2, cursor) === '……' ? 2 : 1; // ……は単位で消す
   text = text.slice(0, cursor - delN) + text.slice(cursor);
   cursor -= delN;
@@ -1559,8 +1583,9 @@ function onKeydown(e) {
       render(); return; // Enter=変換の決定(改行しない)
     }
     if (tut) { tut.errors++; loadDrill(); return; } // Enter=この問をスキップ
-    if (cursor > committedTo || closers.length) { // 未確定かな確定+予約閉じの実体化。改行はしない
-      while (closers.length) out(closers.pop());
+    if (cursor > committedTo || closers.length) { // 未確定かな確定+閉じの外へ。改行はしない
+      snap(false);
+      closeOver(closers.length);
       committedTo = cursor;
       render(); return;
     }
@@ -1687,7 +1712,6 @@ function render() {
   el.innerHTML =
     body + composingHtml() + '<span class="caret"></span>' +
     (pr ? `<span class="ghost">${esc(pr.ghost)}</span>` : '') +
-    (closers.length ? `<span class="closers">${esc(closers.slice().reverse().join(''))}</span>` : '') +
     escNL(text.slice(cursor)) +
     '<div id="curline"></div>';
   // タイプライタースクロール: 入力中は中央固定、手動スクロール中は追従しない
@@ -1724,7 +1748,6 @@ function renderTate(el) {
   tokens.push({ caret: true });
   const pr = predict();
   if (pr) pushUi(pr.ghost, 'ghost');
-  if (closers.length) pushUi(closers.slice().reverse().join(''), 'closers');
   pushText(text.slice(cursor));
 
   const lines = layoutLines(tokens);
