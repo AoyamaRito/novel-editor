@@ -53,6 +53,13 @@
   #keycode { color: var(--accent); min-width: 90px; }
   header select { font-size: 12px; padding: 2px; border: 1px solid #bbb; border-radius: 3px; background: #fff; }
   #text.flash { background: #fbe9e7; }
+  #text.tate { display: flex; align-items: center; justify-content: center; padding: 10px; background: #efece4; }
+  .spread { display: flex; flex-direction: row-reverse; gap: 22px; }
+  .page { background: #fffdf8; border: 1px solid #d8d2c4; box-shadow: 0 2px 8px rgba(0,0,0,.10); padding: 16px 12px 6px; position: relative; }
+  .pagein { writing-mode: vertical-rl; font-size: 12.5px; line-height: 1.85; height: 42em; }
+  .pagein .vl { height: 42em; }
+  .pagein .caret { width: 0.9em; height: 2px; }
+  .pageno { text-align: center; font-family: sans-serif; font-size: 10px; color: #999; padding-top: 4px; }
   #text.tut { display: flex; align-items: center; justify-content: center; }
   .drill { text-align: center; font-family: sans-serif; }
   .drill .stagename { font-size: 13px; color: #888; margin-bottom: 18px; }
@@ -78,6 +85,7 @@
   <header>
     <span class="title">novel-editor</span>
     <span id="mode">─</span>
+    <button id="tate" title="縦書き(電撃文庫: 42字×17行・見開き)">横</button>
     <button id="sound">♪</button>
     <button id="llm" title="ローカルLLM審査員(候補の文脈選択)">審…</button>
     <button id="tut-btn">練習</button>

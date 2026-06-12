@@ -437,5 +437,23 @@ assert(localStorage.getItem('ne:sound') !== sBefore || sBefore === null, '♪ト
 el('sound').onclick();
 ok('効果音トグル');
 
+// ---- 27. 縦書きレイアウト(42字折返し・ぶら下がり・禁則・見開き) ----
+const L = globalThis.__neLayout;
+const tk = (s) => [...s].map((c) => ({ c }));
+let ls = L(tk('あ'.repeat(50)));
+assert(ls[0].length === 42 && ls[1].length === 8, `42字で折り返す: ${ls[0].length}/${ls[1].length}`);
+ls = L(tk('い'.repeat(42) + '。' + 'う'));
+assert(ls[0].length === 43 && ls[0][42].c === '。' && ls[1][0].c === 'う', 'ぶら下がり: 句点が43字目に残る');
+ls = L(tk('え'.repeat(41) + '「お'));
+assert(ls[0].length === 41 && ls[1][0].c === '「', '行末禁則: 開き括弧は次行へ送られる');
+ls = L(tk('か'.repeat(42) + 'ょ' + 'き'));
+assert(ls[0][42].c === 'ょ' && ls[1][0].c === 'き', '行頭禁則: 小書きは追い込み');
+el('tate').onclick(); // 縦書きON
+assert(html().includes('class="spread"') && html().includes('class="pagein"'), '見開きが描画される');
+assert(el('count').textContent.includes('見開き'), 'ページカウンタ表示');
+el('tate').onclick(); // 戻す
+assert(!html().includes('class="spread"'), '横書きに復帰');
+ok('縦書き(電撃文庫42×17・ぶら下がり・禁則・見開き)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

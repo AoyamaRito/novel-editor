@@ -46,6 +46,9 @@ let selfPred = [];   // 予測用: 自分の語彙(コーパス+確定学習)の
 let convRestore = ''; // 変換キャンセル時に戻す文字列(予測変換では打った分だけ戻す)
 let candPaths = null; // ラティス候補の分割情報(確定学習用)。従来型候補のときは null
 let closers = []; // 自動閉じカッコ(キャレットの後ろに予約表示、本文はその手前に入る)
+let tategaki = localStorage.getItem('ne:tate') === 'on';
+let viewSpread = -1; // -1=最終見開きに追従
+let totalSpreads = 1;
 const PAIR = { '「': '」', '（': '）', '『': '』', '(': ')' };
 
 // ---- yume-lite 保存層 ----
@@ -81,6 +84,7 @@ async function save() {
 const NO_INDENT = new Set([...'「『（――……　\n']); // セリフ・リーダー行は字下げしない
 function out(s) {
   if (tut) { tut.buf += s; tutCheck(); return; }
+  viewSpread = -1; // 書いたら最終見開きへ戻る
   if (s && s !== '\n') {
     const first = s[0];
     // 地の文の行頭は全角一字下げ(小説作法)
@@ -624,6 +628,13 @@ function onKeydown(e) {
     return;
   }
   if (code === 'Escape' && tut) { stopTut(); return; }
+  if (tategaki && (code === 'PageUp' || code === 'PageDown')) {
+    e.preventDefault();
+    const cur = viewSpread < 0 ? totalSpreads - 1 : viewSpread;
+    viewSpread = code === 'PageUp' ? Math.max(0, cur - 1) : cur + 1;
+    if (viewSpread >= totalSpreads - 1) viewSpread = -1;
+    render(); return;
+  }
 
   const fnDigit = code.match(/^F([1-9]|10)$/); // 数字はファンクションキー(F1〜F9=1〜9、F10=0)。全角で出す
   if (fnDigit) {
@@ -693,6 +704,42 @@ function onKeyup(e) {
   document.querySelectorAll(`[data-code="${e.code}"]`).forEach((k) => k.classList.remove('hit'));
 }
 
+// ---- 縦書きレイアウト(電撃文庫仕様: 42字×17行・見開き・ぶら下がり・禁則) ----
+const LINE_LEN = 42, PAGE_LINES = 17;
+const HANG = new Set([...'。、']); // 句読点はぶら下げ(43字目)
+const KINSOKU_HEAD = new Set([...'。、」』）！？…ーゃゅょっぁぃぅぇぉ々']); // 行頭に置けない→追い込み
+const KINSOKU_TAIL = new Set([...'「『（']); // 行末に置けない→次行へ送る
+function layoutLines(tokens) {
+  const lines = [];
+  let cur = [], count = 0;
+  const realLast = () => { for (let k = cur.length - 1; k >= 0; k--) if (!cur[k].caret) return cur[k]; return null; };
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.caret) { cur.push(t); continue; }
+    if (t.c === '\n') { lines.push(cur); cur = []; count = 0; continue; }
+    cur.push(t); count++;
+    if (count >= LINE_LEN) {
+      let j = i + 1;
+      while (j < tokens.length && tokens[j].caret) j++;
+      const nx = tokens[j];
+      if (nx && nx.c !== '\n' && (HANG.has(nx.c) || KINSOKU_HEAD.has(nx.c))) {
+        for (let k = i + 1; k <= j; k++) cur.push(tokens[k]); // ぶら下がり/追い込み(43字目)
+        i = j;
+      }
+      let carry = [];
+      if (KINSOKU_TAIL.has(realLast()?.c)) {
+        while (cur.length) { const x = cur.pop(); carry.unshift(x); if (!x.caret) break; } // 開き括弧は次行へ
+      }
+      lines.push(cur);
+      cur = carry;
+      count = carry.filter((x) => !x.caret).length;
+    }
+  }
+  lines.push(cur);
+  return lines;
+}
+globalThis.__neLayout = layoutLines; // e2e 用
+
 // ---- 描画 ----
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 function composingHtml() {
@@ -705,6 +752,8 @@ function render() {
   const el = document.getElementById('text');
   if (tut) { renderTut(el); return; }
   el.classList.remove('tut');
+  if (tategaki) { renderTate(el); return; }
+  el.classList.remove('tate');
   // 未確定の末尾かな列(青字)
   const pendM = text.slice(committedTo).match(/[ぁ-んー]+$/);
   const pendStart = text.length - (pendM ? pendM[0].length : 0);
@@ -730,6 +779,40 @@ function render() {
   document.getElementById('mode').textContent =
     mode === 'NONE' ? '─' : '▼';
   document.getElementById('count').textContent = `${text.length}字`;
+}
+function renderTate(el) {
+  el.classList.add('tate');
+  const tokens = [];
+  const pushStr = (str, cls) => { for (const c of str) tokens.push({ c, cls }); };
+  const pendM = text.slice(committedTo).match(/[ぁ-んー]+$/);
+  const pendStart = text.length - (pendM ? pendM[0].length : 0);
+  const head = text.slice(0, pendStart);
+  if (lastConv && Date.now() < lastConv.until && head.length >= lastConv.pos + lastConv.len) {
+    pushStr(head.slice(0, lastConv.pos));
+    pushStr(head.slice(lastConv.pos, lastConv.pos + lastConv.len), 'conv-flash');
+    pushStr(head.slice(lastConv.pos + lastConv.len));
+  } else { lastConv = null; pushStr(head); }
+  pushStr(text.slice(pendStart), 'pend');
+  if (mode === 'CAND') pushStr('▼' + cands[candIdx], 'cand');
+  tokens.push({ caret: true });
+  const pr = predict();
+  if (pr) pushStr(pr.ghost, 'ghost');
+  if (closers.length) pushStr(closers.slice().reverse().join(''), 'closers');
+
+  const lines = layoutLines(tokens);
+  const pages = [];
+  for (let i = 0; i < lines.length; i += PAGE_LINES) pages.push(lines.slice(i, i + PAGE_LINES));
+  totalSpreads = Math.max(1, Math.ceil(pages.length / 2));
+  const si = viewSpread < 0 ? totalSpreads - 1 : Math.min(viewSpread, totalSpreads - 1);
+  const lineHtml = (ln) =>
+    '<div class="vl">' +
+    ln.map((t) => (t.caret ? '<span class="caret"></span>' : t.cls ? `<span class="${t.cls}">${esc(t.c)}</span>` : esc(t.c))).join('') +
+    '</div>';
+  const pageHtml = (pg, num) =>
+    `<div class="page"><div class="pagein">${(pg || []).map(lineHtml).join('')}</div><div class="pageno">${num}</div></div>`;
+  el.innerHTML = `<div class="spread">${pageHtml(pages[si * 2], si * 2 + 1)}${pageHtml(pages[si * 2 + 1], si * 2 + 2)}</div>`;
+  document.getElementById('mode').textContent = mode === 'NONE' ? '─' : '▼';
+  document.getElementById('count').textContent = `${text.length}字 ・ 見開き ${si + 1}/${totalSpreads}`;
 }
 function renderTut(el) {
   el.classList.add('tut');
@@ -852,6 +935,15 @@ async function main() {
   const sb = document.getElementById('sound');
   sb.textContent = soundOn ? '♪' : '♪̸';
   sb.onclick = toggleSound;
+  const tb = document.getElementById('tate');
+  tb.textContent = tategaki ? '縦' : '横';
+  tb.onclick = () => {
+    tategaki = !tategaki;
+    localStorage.setItem('ne:tate', tategaki ? 'on' : 'off');
+    tb.textContent = tategaki ? '縦' : '横';
+    viewSpread = -1;
+    render();
+  };
   const lb = document.getElementById('llm');
   lb.onclick = () => { llmOn = !llmOn; localStorage.setItem('ne:llm', llmOn ? 'on' : 'off'); updateLlmBtn(); };
   updateLlmBtn();
