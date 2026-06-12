@@ -35,6 +35,9 @@ let dict = {}, baseDict = {}, drills = { convWords: [], lines: [] };
 let userDict = JSON.parse(localStorage.getItem('ne:userDict') || '{}');
 let autoDict = JSON.parse(localStorage.getItem('ne:autoDict') || '{}'); // LLM採取の自動登録(読み→{表記:回数})
 let observed = JSON.parse(localStorage.getItem('ne:observed') || '{}'); // 採取観察カウント(2回で登録)
+let ctxDict = JSON.parse(localStorage.getItem('ne:ctxDict') || '{}'); // 文脈学習: 「直前1字|読み」→{表記:回数}
+let lastPick = JSON.parse(localStorage.getItem('ne:lastPick') || '{}'); // 直近性: 「読み|表記」→確定通番
+let pickSeq = Number(localStorage.getItem('ne:pickSeq') || 0);
 let lastScanLen = Number(localStorage.getItem('ne:lastScanLen') || 0);
 let text = '';
 let mode = 'NONE'; // NONE | CAND(▼)
@@ -740,7 +743,7 @@ function exportBundle() {
   return JSON.stringify({
     app: 'novel-editor', v: 1, at: new Date().toISOString(),
     graph: graph.toJSON(),
-    userDict, autoDict, observed,
+    userDict, autoDict, observed, ctxDict, lastPick, pickSeq,
     settings: {
       tate: tategaki ? 'on' : 'off',
       sound: soundOn ? 'on' : 'off',
@@ -760,6 +763,10 @@ function importBundle(json) {
   text = manuscript.content || '';
   cursor = text.length; committedTo = cursor; closers = []; mode = 'NONE'; reading = '';
   userDict = b.userDict || {}; autoDict = b.autoDict || {}; observed = b.observed || {};
+  ctxDict = b.ctxDict || {}; lastPick = b.lastPick || {}; pickSeq = Number(b.pickSeq || 0);
+  localStorage.setItem('ne:ctxDict', JSON.stringify(ctxDict));
+  localStorage.setItem('ne:lastPick', JSON.stringify(lastPick));
+  localStorage.setItem('ne:pickSeq', String(pickSeq));
   if (logHash === '0' && b.logHash) { // 新規マシン移行(チェーン未開始)のときだけ継承。既存チェーンは絶対に上書きしない
     logHash = b.logHash;
     localStorage.setItem('ne:logHash', logHash);
@@ -835,14 +842,17 @@ function clickOffset(ev) {
 }
 
 // ---- 変換 ----
-function lookup(yomi) {
+function lookup(yomi, ctx = '') {
   const user = userDict[yomi] || {};
   const corpus = dict[yomi] || [];
   const score = {};
   for (const [s, n] of corpus) score[s] = n;
   for (const [s, n] of Object.entries(autoDict[yomi] || {})) score[s] = (score[s] || 0) + n * 1e3; // 自動登録(原稿採取)
   for (const [s, n] of Object.entries(user)) score[s] = (score[s] || 0) + n * 1e6; // 自分の確定が常に勝つ
-  const list = Object.entries(score).sort((a, b) => b[1] - a[1]).map(([s]) => s);
+  if (ctx) for (const [s, n] of Object.entries(ctxDict[ctx + '|' + yomi] || {})) score[s] = (score[s] || 0) + n * 1e9; // 同じ文脈での確定が最優先(「彼女の髪」と「あの神」が並存)
+  const list = Object.entries(score)
+    .sort((a, b) => b[1] - a[1] || (lastPick[yomi + '|' + b[0]] || 0) - (lastPick[yomi + '|' + a[0]] || 0)) // 同点は直近に使った方が先
+    .map(([s]) => s);
   for (const [s] of baseDict[yomi] || []) if (!list.includes(s)) list.push(s); // 基底はコスト順 [表記,cost]
   if (yomi === 'かっこ') for (const p of ['『』', '（）', '「」']) { const i = list.indexOf(p); if (i >= 0) list.splice(i, 1); list.unshift(p); } // ペア候補(確定でカーソルが中に)
   if (!list.includes(yomi)) list.push(yomi); // 末尾=ひらがな無変換(循環で「開く」が選べる)
@@ -1120,7 +1130,7 @@ function wordCands(sub) {
   const seen = new Set();
   return res.filter(([s2]) => !seen.has(s2) && seen.add(s2));
 }
-function latticeBest(run, K = 8) {
+function latticeBest(run, K = 8, ctx = '') {
   const ch = [...run], n = ch.length;
   const dp = [[{ cost: 0, out: '', segs: [], lastKind: '' }]];
   for (let i = 1; i <= n; i++) {
@@ -1133,7 +1143,9 @@ function latticeBest(run, K = 8) {
       for (const [surf, wc, kind] of opts)
         for (const p of dp[j]) {
           const pen = kind === 'k' && p.lastKind === 'k' && !FUNC.has(sub) ? 150 : 0; // 素通し連続は軽く罰(機能語の連鎖は正当なので罰しない)
-          acc.push({ cost: p.cost + wc + 100 + pen, out: p.out + surf, segs: p.segs.concat([[sub, surf]]), lastKind: kind });
+          const prev = p.out ? p.out.slice(-1) : ctx; // この区間の直前文字(経路依存)
+          const cb = prev && ctxDict[prev + '|' + sub]?.[surf] ? 90 : 0; // 同じ文脈で確定した表記は割引
+          acc.push({ cost: p.cost + wc + 100 + pen - cb, out: p.out + surf, segs: p.segs.concat([[sub, surf]]), lastKind: kind });
         }
     }
     acc.sort((a, b) => a.cost - b.cost);
@@ -1172,14 +1184,15 @@ function planConversion() {
     const y = run.slice(run.length - len);
     if (hasCands(y)) { exact = y; break; }
   }
+  const ctxAt = (len) => (tut ? '' : src.slice(upto - symSkip - len - 1, upto - symSkip - len)); // 変換開始位置の直前1字
   const pred = symSkip ? null : predict();
   if (pred && (!exact || pred.S.length > exact.length))
-    return { kind: 'word', yomi: pred.reading, removed: pred.S, list: lookup(pred.reading), paths: null, symSkip };
+    return { kind: 'word', yomi: pred.reading, removed: pred.S, list: lookup(pred.reading, ctxAt(pred.S.length)), paths: null, symSkip };
   if (exact === run)
-    return { kind: 'word', yomi: run, removed: run, list: lookup(run), paths: null, symSkip };
-  const paths = latticeBest(run, 8).filter((p) => p.segs.some(([y, s2]) => y !== s2));
+    return { kind: 'word', yomi: run, removed: run, list: lookup(run, ctxAt(run.length)), paths: null, symSkip };
+  const paths = latticeBest(run, 8, ctxAt(run.length)).filter((p) => p.segs.some(([y, s2]) => y !== s2));
   if (!paths.length) {
-    if (exact) return { kind: 'word', yomi: exact, removed: exact, list: lookup(exact), paths: null, symSkip };
+    if (exact) return { kind: 'word', yomi: exact, removed: exact, list: lookup(exact, ctxAt(exact.length)), paths: null, symSkip };
     return { kind: 'none', run };
   }
   const list = paths.map((p) => p.out);
@@ -1229,16 +1242,27 @@ function confirmCand() {
   const surf = cands[candIdx];
   // 「ひらがなのまま確定」(開く選択)も学習対象。開き閉じの習慣が候補順に乗る
   const chosenPath = candPaths ? candPaths[candIdx] : null;
+  const learnCtx = (prev, y, s2) => { // 文脈(直前1字)と直近性も学習 → 候補順の最適化
+    if (prev) { (ctxDict[prev + '|' + y] ??= {}); ctxDict[prev + '|' + y][s2] = (ctxDict[prev + '|' + y][s2] || 0) + 1; }
+    lastPick[y + '|' + s2] = ++pickSeq;
+  };
+  let prevC = tut ? '' : text.slice(cursor - 1, cursor);
   if (chosenPath) {
     for (const [y, s2] of chosenPath.segs) {
-      if (y === s2 && FUNC.has(y)) continue; // 機能語の素通しは学習しない
+      if (y === s2 && FUNC.has(y)) { prevC = s2.slice(-1); continue; } // 機能語の素通しは学習しない
       (userDict[y] ??= {});
       userDict[y][s2] = (userDict[y][s2] || 0) + 1;
+      learnCtx(prevC, y, s2);
+      prevC = s2.slice(-1);
     }
   } else {
     (userDict[reading] ??= {});
     userDict[reading][surf] = (userDict[reading][surf] || 0) + 1;
+    learnCtx(prevC, reading, surf);
   }
+  localStorage.setItem('ne:ctxDict', JSON.stringify(ctxDict));
+  localStorage.setItem('ne:lastPick', JSON.stringify(lastPick));
+  localStorage.setItem('ne:pickSeq', String(pickSeq));
   localStorage.setItem('ne:userDict', JSON.stringify(userDict));
   rebuildSelfPred(); // 確定学習を予測にも即反映
   logEvt('pick', { y: reading, s: surf, i: candIdx });

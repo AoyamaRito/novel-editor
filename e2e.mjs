@@ -871,6 +871,41 @@ ok('機能語連鎖(だ・よ・ね等)が漢字に乗っ取られない');
 }
 ok('基底辞書v4(190万読み: mozc+IPADIC+SKK+mozc-UT穴埋め)');
 
+// ---- 55. 候補順の最適化(文脈学習+直近性) ----
+{
+  const cand = () => html().match(/class="cand">▼([^<]*)</)?.[1];
+  const convertAfter = async (prefix, yomi) => { // prefix を確定してから yomi を単語変換
+    down('Enter');
+    await typeWord(prefix);
+    down('Enter'); // 未確定かなを確定(文脈の1字を作る)
+    await typeWord(yomi);
+    down('Space');
+  };
+  // 文脈「は」で 神 を2回確定 → 全体頻度は 神 が優勢
+  for (let i = 0; i < 2; i++) {
+    await convertAfter('かれは', 'かみ');
+    let g = 0;
+    while (cand() !== '神' && g++ < 30) down('Space');
+    assert(cand() === '神', `神に到達: ${cand()}`);
+    down('Enter');
+  }
+  // 文脈「の」で 髪 を1回だけ確定
+  await convertAfter('かのじょの', 'かみ');
+  let g2 = 0;
+  while (cand() !== '髪' && g2++ < 30) down('Space');
+  assert(cand() === '髪', `髪に到達: ${cand()}`);
+  down('Enter');
+  // 文脈「の」では全体頻度(神2回)より文脈(髪1回)が勝つ
+  await convertAfter('おとめの', 'かみ');
+  assert(cand() === '髪', `文脈「の」では髪が第一候補: ${cand()}`);
+  down('AltLeft');
+  // 文脈が違えば全体頻度どおり 神
+  await convertAfter('かれは', 'かみ');
+  assert(cand() === '神', `文脈「の」以外では神: ${cand()}`);
+  down('AltLeft'); down('Enter');
+}
+ok('候補順の最適化(文脈1字で 髪/神 が並存、直近性タイブレーク)');
+
 // ---- 51. 作品の改名(履歴ごと引き継ぎ) ----
 {
   globalThis.window = { prompt: () => 'はじまりの物語', confirm: () => true };
