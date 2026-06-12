@@ -1165,11 +1165,8 @@ async function main() {
   llmInit();
   document.getElementById('export').onclick = async () => {
     if (ipc) {
-      const d = new Date();
-      const pad = (n) => String(n).padStart(2, '0');
-      const name = `manuscript-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
-      const p = await ipc.invoke('save-file', { name, content: text });
-      status(`txt書き出し → ${p}`);
+      const p = await ipc.invoke('export-dialog', { defaultName: 'manuscript.txt', content: text });
+      status(p ? `txt書き出し → ${p}` : '書き出しをキャンセルしました');
     } else {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
@@ -1177,12 +1174,16 @@ async function main() {
       a.click();
     }
   };
-  document.getElementById('exp-json').onclick = () => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([exportBundle()], { type: 'application/json' }));
-    a.download = 'novel-editor-backup.json';
-    a.click();
-    status('バックアップJSONを書き出しました(原稿履歴+学習+設定)');
+  document.getElementById('exp-json').onclick = async () => {
+    if (ipc) {
+      const p = await ipc.invoke('export-dialog', { defaultName: 'novel-editor-backup.json', content: exportBundle() });
+      status(p ? `バックアップ書き出し → ${p}` : 'キャンセルしました');
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([exportBundle()], { type: 'application/json' }));
+      a.download = 'novel-editor-backup.json';
+      a.click();
+    }
   };
   const fi = document.getElementById('imp-file');
   document.getElementById('imp-json').onclick = () => fi.click?.();
@@ -1208,6 +1209,9 @@ async function main() {
   };
   sel.onchange = () => { if (tut) startTut(Number(sel.value)); };
   setInterval(() => { if (!tut && text !== (manuscript.content || '')) save(); }, 10000); // 10秒ごと自動保存
+  setInterval(() => { // 5分ごとに完全バックアップ(原稿履歴+学習+設定)を自動で書く
+    if (ipc) ipc.invoke('save-file', { name: 'backup-auto.json', content: exportBundle() }).catch(() => {});
+  }, 300000);
   setInterval(llmHarvest, 60000); // 1分ごとに固有名詞の採取
   setInterval(flushLog, 30000); // 打鍵ログの書き出し
   setTimeout(() => anchorNow(false), 20000); // 起動後に当日分の公証

@@ -1,7 +1,7 @@
 // Electron main: ローカル専用の執筆アプリ。リモートコンテンツは一切読まない。
 // webSecurity:false / nodeIntegration:true は file:// 上の ES module + IPC レス fs 利用の割り切り
 // (完全ローカル・自分の原稿のみという前提でのみ正当)。
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -34,6 +34,17 @@ ipcMain.handle('append-file', (e, { name, content }) => {
   const p = path.join(dir, name);
   fs.appendFileSync(p, content, 'utf8');
   return p;
+});
+
+// 保存ダイアログ付きエクスポート(どこに出たか分かるように)
+ipcMain.handle('export-dialog', async (e, { defaultName, content }) => {
+  const win = BrowserWindow.getFocusedWindow();
+  const r = await dialog.showSaveDialog(win, {
+    defaultPath: path.join(app.getPath('documents'), defaultName),
+  });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, content, 'utf8');
+  return r.filePath;
 });
 
 // 公証: logHash の SHA-256 を OpenTimestamps カレンダーに刻む(Bitcoin ブロックチェーン=改ざん不能な世界時計)。
