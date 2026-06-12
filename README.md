@@ -82,3 +82,24 @@ node e2e.mjs   # 偽DOM+偽llama-server上で keydown列→描画を検証
   anchors.jsonl は OpenTimestamps カレンダーの **pending 証明**(標準 .ots 形式での第三者検証導線は未整備=次フェーズ)。
   「カレンダー応答を当日中に取得した」ことの記録であり、Bitcoin ブロックへの確定検証はまだ主張しない
 - 注意: ブラウザ実行(非Electron)では log.jsonl を書けないためチェーン head だけが進む。証明用途は Electron 実行が前提
+
+## ライセンスと同梱物
+
+- コード(editor.js / main.cjs / e2e.mjs / tools/ / vendor/yume-lite-core.js): **MIT**(LICENSE 参照)
+- `dict.json` / `drills.json` / `layout.json`: 作者自身のなろう公開作品から生成した派生データ(MIT 扱いで公開)
+- `basedict.json`(基底辞書)は**リポジトリに含まれない**。各自 `tools/build-basedict2.js` で生成する:
+  - 取得元: mozc dictionary_oss(BSD-3-Clause)、mecab-ipadic-seed(IPAライセンス)、SKK-JISYO L/jinmei/geo/propernoun/station(GPL)、mozc-UT jawiki/personal-names/place-names/sudachidict(各配布条件)
+  - 生成物は GPL 等の混合物になるため再配布せず、手元生成・私的利用とする
+- LLM モデル(`llm/model.gguf`, `llm/model2.gguf`)も同梱しない。TinySwallow-1.5B-Instruct(Apache-2.0)と Qwen3-4B-Instruct(Apache-2.0)の GGUF を置く。llama-server バイナリは llama.cpp(MIT)
+
+## 先行技術としての公開(防衛的公開)
+
+本リポジトリは 2026-06-12〜13 に実装された以下の機構を、MIT ライセンスで**公知の先行技術**として公開するものです:
+
+1. **打鍵ログのハッシュチェーン+公証による著者証明**: 全打鍵を SHA-256 チェーン(各行が前行ハッシュを内包する append-only ログ)で記録し、チェーン先頭ハッシュを OpenTimestamps で外部時刻に固定。決定的変換エンジンと合わせ「本文が人間の打鍵から再導出できる」ことを第三者検証可能にする。外部由来テキスト(ペースト/取込)は全文をチェーンに記録して開示する
+2. **公理0(LLM非介在の生成経路)+LLM フィルタ審査**: かな漢字変換は辞書 lookup と最小コスト経路のみで決定的に行い、LLM は提示済み候補の番号のみを出力する審査員として作用する(本文の字面を生成しない)
+3. **複数ローカルLLMの合議審査**: 2モデルの第一候補が一致した時だけ採用し、不一致なら沈黙して辞書順を保つ(能動的誤審の排除)
+4. **自己コーパス導出キー配列**: 著者自身の原稿の打鍵単位頻度・bigramからキー配列を導出し、anchor モードで増分再導出して学習済み配列の連続性を守る
+5. **文脈1字学習と直近性による候補順最適化**: 確定時に「直前1字+読み→表記」を学習し、同一文脈で全体頻度より優先。ラティス経路にも文脈割引を適用
+6. **本文+機械用メタ同居の作品ファイル**: プレーンテキスト本文の末尾に sha-256・チェーン錨・メタを1行 JSON で同居させ、ファイル単体で改ざん検出できる原稿形式
+7. **エンジン版のチェーン固定**: 起動時に配列 sha とエンジン sha をチェーンに記録し、打鍵リプレイの再現性を版に対して保証する

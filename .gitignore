@@ -5,3 +5,4 @@ nohup.out
 llm/
 .DS_Store
 *.gguf
+basedict.json
