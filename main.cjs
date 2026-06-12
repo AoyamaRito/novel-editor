@@ -1,7 +1,7 @@
 // Electron main: ローカル専用の執筆アプリ。リモートコンテンツは一切読まない。
 // webSecurity:false / nodeIntegration:true は file:// 上の ES module + IPC レス fs 利用の割り切り
 // (完全ローカル・自分の原稿のみという前提でのみ正当)。
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -124,6 +124,9 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin') app.dock?.setIcon(path.join(__dirname, 'build', 'icon-1024.png'));
+  if (process.platform === 'darwin') {
+    try { systemPreferences.askForMediaAccess('microphone'); } catch {} // マイク権限の正式要求(音声入力用)
+  }
   startLlm();
   startWhisper();
   createWindow();

@@ -58,6 +58,7 @@
   footer { display: flex; gap: 16px; padding: 4px 16px; font-family: monospace; font-size: 11px; color: #888; border-top: 1px solid #e5e5e0; }
   #keycode { color: var(--accent); min-width: 90px; }
   header select { font-size: 12px; padding: 2px; border: 1px solid #bbb; border-radius: 3px; background: #fff; }
+  #micsel { max-width: 110px; }
   #text.flash { background: #fbe9e7; }
   #text.tate { display: flex; align-items: center; justify-content: center; padding: 2px; background: #efece4; }
   .spread { display: flex; flex-direction: row-reverse; gap: 12px; }
@@ -106,6 +107,7 @@
     <button id="imp-json" title="バックアップJSONから復元">⬆json</button>
     <button id="cert" title="著者証明レポートを発行(チェーン検証+執筆統計+外部由来開示)">証</button>
     <button id="mic" title="音声入力(ローカルwhisper。声は証拠として保存)">🎤</button>
+    <select id="micsel" title="マイクの選択"></select>
     <input type="file" id="imp-file" accept=".json" style="display:none">
     <span id="count"></span>
   </header>

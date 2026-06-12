@@ -445,6 +445,9 @@ async function toWav16k(arrayBuf) {
   const audio = await ac.decodeAudioData(arrayBuf.slice(0));
   ac.close();
   const ch = audio.getChannelData(0);
+  let sum = 0;
+  for (let i = 0; i < ch.length; i += 16) sum += ch[i] * ch[i];
+  toWav16k.rms = Math.sqrt(sum / Math.max(1, ch.length / 16)); // 無音診断用
   const pcm = new Int16Array(ch.length);
   for (let i = 0; i < ch.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32767)));
   const buf = new ArrayBuffer(44 + pcm.length * 2);
@@ -514,6 +517,10 @@ async function handleVoice(blob, dur) {
   status('書き起こし中…');
   try {
     const wav = await toWav16k(buf);
+    if ((toWav16k.rms || 0) < 1e-4) { // 無音: whisperに送っても「(音楽)」幻聴になるだけ
+      status('録音が無音でした — システム設定>プライバシーとセキュリティ>マイク で許可を確認してください');
+      return;
+    }
     const fd = new FormData();
     fd.append('file', new Blob([wav], { type: 'audio/wav' }), 'a.wav');
     fd.append('response_format', 'json');
@@ -525,11 +532,26 @@ async function handleVoice(blob, dur) {
     else status('書き起こし結果が空でした');
   } catch { status('書き起こし失敗(whisper起動待ちの可能性)'); }
 }
+async function populateMics() {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return;
+  const sel = document.getElementById('micsel');
+  if (!sel) return;
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
+    const saved = localStorage.getItem('ne:micId') || '';
+    sel.innerHTML = devs
+      .map((d, i) => `<option value="${esc(d.deviceId)}"${d.deviceId === saved ? ' selected' : ''}>${esc(d.label || 'マイク' + (i + 1))}</option>`)
+      .join('');
+  } catch {}
+}
 async function micToggle() {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) { status('マイク非対応環境です'); return; }
   if (rec) { rec.stop(); return; }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const micId = document.getElementById('micsel')?.value || localStorage.getItem('ne:micId') || '';
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: micId ? { deviceId: { exact: micId } } : true,
+    });
     recChunks = []; recStart = Date.now();
     rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
     rec.ondataavailable = (e) => recChunks.push(e.data);
@@ -542,7 +564,8 @@ async function micToggle() {
     };
     rec.start();
     updateMicBtn();
-    status('録音中…(🎤でもう一度押すと停止→書き起こし)');
+    const dev = stream.getAudioTracks()[0]?.label || '不明なデバイス';
+    status(`録音中(${dev})…(🎤で停止→書き起こし)`);
   } catch { status('マイクの使用が許可されませんでした'); }
 }
 
@@ -1732,6 +1755,11 @@ async function main() {
   document.getElementById('cert').onclick = issueCertificate;
   const micBtn = document.getElementById('mic');
   if (micBtn) micBtn.onclick = micToggle;
+  const micSel = document.getElementById('micsel');
+  if (micSel) micSel.onchange = (ev) => { localStorage.setItem('ne:micId', ev.target.value); status('マイクを切り替えました'); };
+  populateMics();
+  if (typeof navigator !== 'undefined' && navigator.mediaDevices)
+    navigator.mediaDevices.ondevicechange = populateMics;
   const docSel = document.getElementById('doc');
   refreshDocSel();
   if (docSel) docSel.onchange = (ev) => switchDoc(ev.target.value);
