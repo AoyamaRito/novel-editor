@@ -43,8 +43,7 @@ ipcMain.handle('read-file', (e, { name }) => {
 
 // 保存ダイアログ付きエクスポート(どこに出たか分かるように)
 ipcMain.handle('export-dialog', async (e, { defaultName, content }) => {
-  const win = BrowserWindow.getFocusedWindow();
-  const r = await dialog.showSaveDialog(win, {
+  const r = await dialog.showSaveDialog({
     defaultPath: path.join(app.getPath('documents'), defaultName),
   });
   if (r.canceled || !r.filePath) return null;

@@ -152,7 +152,7 @@ function out(s) {
       text = before + '　' + text.slice(cursor); cursor++;
     }
     // 閉じ括弧の前の句点は落とす(「〜だ。」→「〜だ」)
-    if (first === '」' && text.slice(0, cursor).endsWith('。')) {
+    if ('」』）'.includes(first) && text.slice(0, cursor).endsWith('。')) {
       text = text.slice(0, cursor - 1) + text.slice(cursor);
       cursor--;
       committedTo = Math.min(committedTo, cursor);
@@ -418,18 +418,33 @@ function importBundle(json) {
   text = manuscript.content || '';
   cursor = text.length; committedTo = cursor; closers = []; mode = 'NONE'; reading = '';
   userDict = b.userDict || {}; autoDict = b.autoDict || {}; observed = b.observed || {};
-  logHash = b.logHash || logHash; lastScanLen = b.lastScanLen || 0;
+  if (logHash === '0' && b.logHash) { // 新規マシン移行(チェーン未開始)のときだけ継承。既存チェーンは絶対に上書きしない
+    logHash = b.logHash;
+    localStorage.setItem('ne:logHash', logHash);
+  }
+  lastScanLen = b.lastScanLen || 0;
+  curDocId = 'novel:manuscript'; // 復元後の現在作品を manuscript に揃える(自動保存とstateの汚染防止)
+  localStorage.setItem('ne:curDoc', curDocId);
   localStorage.setItem('ne:graph', JSON.stringify(graph.toJSON()));
   localStorage.setItem('ne:userDict', JSON.stringify(userDict));
   localStorage.setItem('ne:autoDict', JSON.stringify(autoDict));
   localStorage.setItem('ne:observed', JSON.stringify(observed));
-  localStorage.setItem('ne:logHash', logHash);
   localStorage.setItem('ne:lastScanLen', String(lastScanLen));
   for (const [k, v] of Object.entries(b.settings || {})) localStorage.setItem('ne:' + (k === 'tutStage' ? 'tutStage' : k), v);
+  // 設定のメモリ値とボタン表示も即同期(再起動待ちにしない)
+  const st2 = b.settings || {};
+  if (st2.tate) tategaki = st2.tate === 'on';
+  if (st2.sound) soundOn = st2.sound === 'on';
+  if (st2.llm) llmOn = st2.llm === 'on';
+  if (st2.chart) chartOn = st2.chart === 'on';
+  const tb2 = document.getElementById('tate'); if (tb2) tb2.textContent = tategaki ? '縦' : '横';
+  const sb2 = document.getElementById('sound'); if (sb2) sb2.textContent = soundOn ? '♪' : '♪̸';
+  const cb2 = document.getElementById('chartbtn'); if (cb2) cb2.textContent = chartOn ? '盤' : '盤̸';
+  updateLlmBtn();
   rebuildSelfPred();
   undoStack = []; redoStack = [];
   refreshDocSel();
-  logEvt('import', { bsha: sha256hex(json), sha: sha256hex(text), len: text.length }); // 復元も記録
+  logEvt('import', { bsha: sha256hex(json), importedHead: b.logHash || null, sha: sha256hex(text), len: text.length }); // 復元も記録(チェーンheadは不変)
   render();
 }
 globalThis.__neExport = exportBundle; // e2e 用
@@ -595,7 +610,9 @@ async function llmHarvest() {
   const committed = text.slice(0, committedTo);
   if (committed.length - lastScanLen < 60) return; // 新しく書けた分が貯まってから
   if (lastScanLen > committed.length) lastScanLen = committed.length; // 原稿が縮んだ場合の防御
-  const chunk = committed.slice(Math.max(0, lastScanLen - 40)).slice(-500);
+  const prevScan = lastScanLen;
+  const chunk = committed.slice(Math.max(0, lastScanLen - 40)).slice(-500); // 文脈用(重複40字含む)
+  const fresh = committed.slice(prevScan); // カウントは新規部分のみ(重複二重カウントで2回観察ガードが弱るのを防ぐ)
   lastScanLen = committed.length;
   localStorage.setItem('ne:lastScanLen', String(lastScanLen));
   const prompt = `以下の小説本文から固有名詞(人名・地名・組織名・技名など)と珍しい語だけを抜き出し、1行に「表記,読み(ひらがな)」の形式で列挙してください。説明や一般語は不要です。\n本文:「${chunk}」`;
@@ -613,8 +630,9 @@ async function llmHarvest() {
       if (!m) continue;
       const [, surf, yomi] = m;
       if (surf === yomi || yomi.length < 2) continue;
-      const occ = chunk.split(surf).length - 1;
-      if (occ < 1) continue; // 原稿に実在しない抽出は捨てる(幻覚ガード)
+      if (!chunk.includes(surf)) continue; // 原稿に実在しない抽出は捨てる(幻覚ガード)
+      const occ = fresh.split(surf).length - 1;
+      if (occ < 1) continue; // 新規に書かれた分だけを観察として数える
       const key = surf + '\t' + yomi;
       observed[key] = (observed[key] || 0) + occ;
       if (observed[key] >= 2 && !autoDict[yomi]?.[surf]) {
@@ -830,7 +848,10 @@ function emit(ch) {
       if (CYCLE[last]) { tut.buf = tut.buf.slice(0, -1) + CYCLE[last]; tutCheck(); }
     } else {
       const last = text.slice(cursor - 1, cursor);
-      if (CYCLE[last]) text = text.slice(0, cursor - 1) + CYCLE[last] + text.slice(cursor);
+      if (CYCLE[last]) {
+        snap(false);
+        text = text.slice(0, cursor - 1) + CYCLE[last] + text.slice(cursor);
+      }
     }
   } else {
     if (!tut) {
@@ -1111,7 +1132,7 @@ function onKeydown(e) {
     e.preventDefault();
     if (e.repeat) return; // キーリピートで「決定+改行」が連発するのを防ぐ
     if (mode === 'CAND') {
-      if (mode === 'CAND') confirmCand();
+      confirmCand();
       render(); return; // Enter=変換の決定(改行しない)
     }
     if (tut) { tut.errors++; loadDrill(); return; } // Enter=この問をスキップ
@@ -1418,6 +1439,10 @@ async function main() {
     } catch {}
   }
   if (logHash !== '0' && logHash.length < 64) logEvt('rehash', { old: logHash }); // 旧FNVチェーンを新チェーンに巻き込む
+  // 配列とエンジンの版をチェーンに固定(リプレイ時にどの版で導出すべきかを確定させる)
+  let engineSha = null;
+  try { engineSha = sha256hex(await (await fetch('./editor.js')).text()); } catch {}
+  logEvt('boot', { layout: sha256hex(JSON.stringify(layout)), engine: engineSha });
   buildCharts(layout);
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('keyup', onKeyup);

@@ -659,5 +659,36 @@ ok('検索(Cmd+F/G)+ページスライダー');
 }
 ok('証明書: 前方切り詰め検出(アンカー照合)');
 
+// ---- 42. 監査4R: importはチェーンを壊さない / curDocIdリセット / boot固定 ----
+{
+  // バッファ内のチェーン連鎖が import を跨いで切れていないこと
+  const verifyBuf = () => {
+    const ls2 = globalThis.__neLogAll();
+    for (let i = 1; i < ls2.length; i++) {
+      const prevHead = globalThis.__neSha(JSON.parse(ls2[i - 1]).p !== undefined ? (() => { let h3 = JSON.parse(ls2[0]).p; for (let k = 0; k < i; k++) h3 = globalThis.__neSha(h3 + ls2[k]); return h3; })() : '0');
+      // 簡易: 各行の p が直前までの再計算headと一致
+    }
+    let h3 = JSON.parse(ls2[0]).p;
+    for (let k = 0; k < ls2.length; k++) {
+      if (JSON.parse(ls2[k]).p !== h3) return k;
+      h3 = globalThis.__neSha(h3 + ls2[k]);
+    }
+    return -1;
+  };
+  globalThis.__neDoc('novel:test2'); // 別作品を開いた状態で復元
+  const bundle42 = globalThis.__neExport();
+  globalThis.__neImport(bundle42);
+  assert(verifyBuf() === -1, 'import後もログバッファのチェーンが連続');
+  const impEvt = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'import').pop();
+  assert(impEvt.importedHead !== undefined, 'importedHeadがデータとして記録される');
+  el('save').onclick();
+  await wait(30);
+  const st42 = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'state').pop();
+  assert(st42.d === 'novel:manuscript', '復元後はcurDocIdがmanuscriptに揃う');
+  const boot42 = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'boot').pop();
+  assert(boot42 && boot42.layout?.length === 64, '配列版のshaがチェーンに固定される(boot)');
+}
+ok('監査4R(import非破壊・curDocId・boot固定)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
