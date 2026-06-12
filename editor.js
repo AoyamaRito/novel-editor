@@ -1138,9 +1138,10 @@ function onKeyup(e) {
 
 // ---- 縦書きレイアウト(電撃文庫仕様: 42字×17行・見開き・ぶら下がり・禁則) ----
 const LINE_LEN = 42, PAGE_LINES = 17;
-const HANG = new Set([...'。、']); // 句読点はぶら下げ(43字目)
-const KINSOKU_HEAD = new Set([...'。、」』）！？…ーゃゅょっぁぃぅぇぉ々']); // 行頭に置けない→追い込み
+const HANG = new Set([...'。、']); // 句読点だけ43字目にぶら下げ(電撃式)
+const KINSOKU_HEAD = new Set([...'」』）！？…ーゃゅょっぁぃぅぇぉ々']); // 行頭に置けない→前の字ごと追い出し
 const KINSOKU_TAIL = new Set([...'「『（']); // 行末に置けない→次行へ送る
+const LEADER = new Set([...'…―']); // ……/――は行をまたいで分割しない
 function layoutLines(tokens) {
   const lines = [];
   let cur = [], count = 0;
@@ -1157,14 +1158,19 @@ function layoutLines(tokens) {
       let j = i + 1;
       while (j < tokens.length && tokens[j].caret) j++;
       const nx = tokens[j];
-      if (nx && nx.c !== '\n' && (HANG.has(nx.c) || KINSOKU_HEAD.has(nx.c))) {
-        for (let k = i + 1; k <= j; k++) cur.push(tokens[k]); // ぶら下がり/追い込み(43字目)
-        i = j;
-      }
+      const popReal = (carry) => { // 末尾の実文字1個(随伴キャレット込み)を次行へ
+        while (cur.length) { const x = cur.pop(); carry.unshift(x); if (!x.caret) { count--; break; } }
+      };
       let carry = [];
-      if (KINSOKU_TAIL.has(realLast()?.c)) {
-        while (cur.length) { const x = cur.pop(); carry.unshift(x); if (!x.caret) break; } // 開き括弧は次行へ
+      if (nx && nx.c !== '\n' && HANG.has(nx.c)) {
+        for (let k = i + 1; k <= j; k++) cur.push(tokens[k]); // 句読点のみ43字目にぶら下げ
+        i = j;
+      } else if (nx && nx.c !== '\n' && LEADER.has(nx.c) && LEADER.has(realLast()?.c)) {
+        popReal(carry); // ……/――の分割禁止: 前半ごと次行へ
+      } else if (nx && nx.c !== '\n' && KINSOKU_HEAD.has(nx.c)) {
+        popReal(carry); // 行頭禁則: 前の字ごと追い出し
       }
+      if (KINSOKU_TAIL.has(realLast()?.c)) popReal(carry); // 開き括弧は行末に置けない
       lines.push(cur);
       cur = carry;
       count = carry.filter((x) => !x.caret).length;
