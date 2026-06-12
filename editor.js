@@ -178,9 +178,11 @@ async function save() {
   const r = manuscript.applyPatch(text);
   localStorage.setItem('ne:graph', JSON.stringify(graph.toJSON()));
   let where = 'localStorage';
-  if (ipc && curFile) {
-    try { where = await ipc.invoke('write-abs', { p: curFile, content: serializeWork() }); } // 正本=本文+メタ同居txt(.bak一世代)
-    catch (e) { where = 'localStorage(ディスク保存失敗)'; }
+  if (ipc && curDir && curName) {
+    try {
+      where = await ipc.invoke('write-abs', { p: curDir + '/' + curName, content: text }); // 話=100%ベタtxt(.bak一世代)
+      if (ledger) { ledger.files[curName] = ledgerEntry(); await saveLedger(); } // 証明は台帳へ(sha+チェーン錨)
+    } catch (e) { where = 'localStorage(ディスク保存失敗)'; }
   } else if (ipc) {
     try {
       const p = await ipc.invoke('save-file', { name: curDocId.replace('novel:', '') + '.txt', content: text });
@@ -376,7 +378,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
   const foundHeads = new Set();
   let head = lines.length ? (JSON.parse(lines[0]).p ?? '0') : '0';
   let broken = -1;
-  const st = { k: 0, rep: 0, conv: 0, pick: 0, paste: [], imports: 0, states: [], modes: { h: 0, v: 0, t: 0 } };
+  const st = { k: 0, rep: 0, conv: 0, pick: 0, paste: [], imports: 0, openext: [], extedit: 0, states: [], modes: { h: 0, v: 0, t: 0 } };
   let tMin = null, tMax = null, sessions = 0, lastT = 0;
   for (let i = 0; i < lines.length; i++) {
     let e;
@@ -399,6 +401,8 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     else if (e.e === 'voice') st.voice = (st.voice || 0) + 1;
     else if (e.e === 'stt') st.sttChars = (st.sttChars || 0) + [...(e.s || '')].length;
     else if (e.e === 'import') st.imports++;
+    else if (e.e === 'openext') st.openext.push({ f: e.f, len: e.len || 0 });
+    else if (e.e === 'extedit') st.extedit++;
     else if (e.e === 'state') { if (!e.d || e.d === curDocId) st.states.push({ at: new Date(e.t).toISOString(), sha: e.sha, len: e.len }); }
   }
   const pasteTotal = st.paste.reduce((a, p) => a + p.len, 0);
@@ -428,6 +432,8 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     '## 外部由来テキスト(全件開示)',
     `- 貼り付け: ${st.paste.length}件 / 合計 ${pasteTotal}字`,
     ...st.paste.slice(-20).map((p) => `  - ${fmt(p.at)} に ${p.len}字`),
+    `- 外部ファイル取込: ${st.openext.length}件 / 合計 ${st.openext.reduce((a, o) => a + o.len, 0)}字` + (st.openext.length ? `(${st.openext.slice(-10).map((o) => o.f).join(', ')})` : ''),
+    `- 外部編集の再基準化: ${st.extedit}回`,
     `- バックアップ復元: ${st.imports}件`,
     `- 音声入力: 録音 ${st.voice || 0}件 / 書き起こし ${st.sttChars || 0}字(本人発話。音声はsha付きでチェーン固定・保存)`,
     '',
@@ -668,20 +674,14 @@ async function micToggle(viaPtt) {
 }
 
 // ---- 作品ファイル(正本): 本文プレーンtxt + 機械用メタ(sha/チェーン錨)の同居形式 ----
-const WORK_MARKER = '\n――― novel-editor: 以下は機械用メタ(本文はこの行より上) ―――\n';
-let curFile = localStorage.getItem('ne:curFile') || null;
-function serializeWork() {
-  const meta = {
-    v: 1,
-    name: curDocId.replace('novel:', ''),
-    savedAt: new Date().toISOString(),
-    sha: sha256hex(text),
-    len: text.length,
-    chainHead: logHash,
-  };
-  return text + WORK_MARKER + JSON.stringify(meta) + '\n';
-}
-function parseWork(content) {
+const WORK_MARKER = '\n――― novel-editor: 以下は機械用メタ(本文はこの行より上) ―――\n'; // 旧・埋め込み形式(読み込み互換のみ)
+// 作品=フォルダ、話=中の素txt(100%ベタ)、証明=台帳 novel-editor.json(各txtの sha+チェーン錨)
+let curDir = localStorage.getItem('ne:curDir') || null;
+let curName = localStorage.getItem('ne:curName') || null; // いま開いている話のファイル名
+let ledger = null; // { v, name, order:[], files:{ name:{sha,len,chainHead,savedAt} }, lastOpen }
+const LEDGER_FILE = 'novel-editor.json';
+function ledgerEntry() { return { sha: sha256hex(text), len: text.length, chainHead: logHash, savedAt: new Date().toISOString() }; }
+function parseWork(content) { // 旧形式の互換読み(メタ埋め込みtxt)
   const i = content.lastIndexOf(WORK_MARKER);
   if (i < 0) return { body: content.replace(/\n$/, ''), meta: null, verified: false };
   const body = content.slice(0, i);
@@ -689,52 +689,110 @@ function parseWork(content) {
   try { meta = JSON.parse(content.slice(i + WORK_MARKER.length)); } catch {}
   return { body, meta, verified: !!meta && meta.sha === sha256hex(body) };
 }
-globalThis.__neWork = { serialize: serializeWork, parse: parseWork }; // e2e 用
-function adoptFile(p, body, name) {
-  curFile = p;
-  localStorage.setItem('ne:curFile', p);
-  curDocId = 'novel:' + name;
+globalThis.__neWork = { entry: ledgerEntry, parse: parseWork, verify: (body, e2) => !!e2 && e2.sha === sha256hex(body) }; // e2e 用
+async function loadLedger(dir) {
+  try {
+    const raw = await ipc.invoke('read-abs', { p: dir + '/' + LEDGER_FILE });
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { v: 1, name: dir.split('/').pop(), order: [], files: {}, lastOpen: null };
+}
+async function saveLedger() {
+  if (!ipc || !curDir || !ledger) return;
+  await ipc.invoke('write-abs', { p: curDir + '/' + LEDGER_FILE, content: JSON.stringify(ledger, null, 1) });
+}
+function refreshEpisodeSel() {
+  const sel = document.getElementById('doc');
+  if (!sel || !ledger) return;
+  sel.innerHTML = ledger.order.map((n) => `<option value="${n.replace(/"/g, '&quot;')}"${n === curName ? ' selected' : ''}>${n.replace(/\.txt$/, '')}</option>`).join('');
+  const fb = document.getElementById('filename');
+  if (fb) fb.textContent = ledger.name;
+}
+function adoptEpisode(body) {
+  curDocId = 'novel:' + (ledger ? ledger.name : '') + '/' + curName;
   localStorage.setItem('ne:curDoc', curDocId);
+  localStorage.setItem('ne:curDir', curDir);
+  localStorage.setItem('ne:curName', curName);
   text = body;
   cursor = text.length; committedTo = cursor;
   closers = []; mode = 'NONE'; reading = '';
   undoStack = []; redoStack = []; viewSpread = -1; followCaret = true;
   manuscript = graph.get(curDocId) || new Block({ id: curDocId, type: 'text' });
   if (!graph.has(curDocId)) graph.add(manuscript);
-  const fb = document.getElementById('filename');
-  if (fb) fb.textContent = name;
+  refreshEpisodeSel();
   render();
 }
-async function openFile() {
-  if (!ipc) { status('ファイルを開くのは Electron 実行時のみです'); return; }
-  const r = await ipc.invoke('open-dialog');
-  if (!r) return;
-  const name = r.path.split('/').pop().replace(/\.txt$/, '');
-  const { body, meta, verified } = parseWork(r.content);
-  if (meta && !verified) {
-    if (!window.confirm('このファイルは外部で編集されています(本文shaが不一致)。開いて再基準化しますか?')) return;
-    adoptFile(r.path, body, name);
+async function openEpisode(name, opts = {}) {
+  if (!ipc || !curDir) return;
+  if (curName && curName !== name && !opts.noSave) await save(); // 移る前に今の話を保存
+  const raw = (await ipc.invoke('read-abs', { p: curDir + '/' + name })) ?? '';
+  const legacy = parseWork(raw);
+  const body = legacy.meta ? legacy.body : raw.replace(/\n$/, ''); // 旧埋め込み形式は本文だけ剥がして移行
+  const known = ledger.files[name];
+  curName = name;
+  if (!ledger.order.includes(name)) ledger.order.push(name);
+  ledger.lastOpen = name;
+  if (known && known.sha === sha256hex(body)) {
+    adoptEpisode(body);
+    logEvt('open', { f: name, sha: known.sha, head: known.chainHead });
+    status(`${name.replace(/\.txt$/, '')} を開きました(台帳と整合 ✓)`);
+  } else if (known) {
+    if (!opts.force && !window.confirm(`「${name}」は外部で編集されています(台帳のshaと不一致)。開いて再基準化しますか?`)) { curName = null; return; }
+    adoptEpisode(body);
     logEvt('extedit', { f: name, sha: sha256hex(body), len: body.length }); // 外部編集を正直に記録
-    status(`開きました(外部編集を検出・再基準化): ${name}`);
-  } else if (meta) {
-    adoptFile(r.path, body, name);
-    logEvt('open', { f: name, sha: meta.sha, head: meta.chainHead });
-    status(`開きました: ${name}(整合 ✓)`);
+    status(`${name.replace(/\.txt$/, '')} を開きました(外部編集を検出・再基準化)`);
   } else {
-    adoptFile(r.path, body, name);
-    logEvt('openext', { f: name, sha: sha256hex(body), len: body.length }); // 外部由来ファイル
-    status(`開きました(外部ファイル・由来として記録): ${name}`);
+    adoptEpisode(body);
+    logEvt('openext', { f: name, sha: sha256hex(body), len: body.length }); // 台帳に無い=外部由来として記録
+    status(`${name.replace(/\.txt$/, '')} を取り込みました(外部由来として記録)`);
   }
+  ledger.files[name] = ledgerEntry();
+  await saveLedger();
 }
-async function newFile() {
-  if (!ipc) { status('新規ファイルは Electron 実行時のみです'); return; }
-  const p = await ipc.invoke('new-dialog');
-  if (!p) return;
-  const name = p.split('/').pop().replace(/\.txt$/, '');
-  adoptFile(p, '', name);
-  await ipc.invoke('write-abs', { p, content: serializeWork() });
+async function openWork() {
+  if (!ipc) { status('作品フォルダを開くのは Electron 実行時のみです'); return; }
+  const dir = await ipc.invoke('open-dir-dialog');
+  if (!dir) return;
+  curDir = dir; curName = null;
+  ledger = await loadLedger(dir);
+  const disk = await ipc.invoke('list-dir', { p: dir });
+  ledger.order = ledger.order.filter((n) => disk.includes(n)).concat(disk.filter((n) => !ledger.order.includes(n)));
+  if (!ledger.order.length) { // 空フォルダ=新しい作品
+    curName = '第1話.txt';
+    ledger.order = [curName];
+    adoptEpisode('');
+    logEvt('doc', { id: curDocId });
+    await save();
+    status(`新しい作品: ${ledger.name}(第1話から)`);
+    return;
+  }
+  await openEpisode(ledger.lastOpen && ledger.order.includes(ledger.lastOpen) ? ledger.lastOpen : ledger.order[0], { noSave: true });
+}
+async function newEpisode() {
+  if (!ipc || !curDir || !ledger) { status('先に「開く」で作品フォルダを選んでください'); return; }
+  const def = `第${ledger.order.length + 1}話`;
+  const name0 = window.prompt ? window.prompt('新しい話の名前:', def) : def;
+  if (!name0) return;
+  const name = name0.endsWith('.txt') ? name0 : name0 + '.txt';
+  if (ledger.order.includes(name)) { status('同名の話があります'); return; }
+  await save(); // 今の話を確定してから
+  curName = name;
+  ledger.order.push(name);
+  ledger.lastOpen = name;
+  adoptEpisode('');
   logEvt('doc', { id: curDocId });
-  status(`新しい作品: ${name}`);
+  await save();
+  status(`新しい話: ${name.replace(/\.txt$/, '')}`);
+}
+async function initFileMode() { // 起動時: 前回の作品フォルダを復元(外部編集もここで検出)
+  if (!ipc || !curDir) return;
+  ledger = await loadLedger(curDir);
+  const disk = await ipc.invoke('list-dir', { p: curDir });
+  ledger.order = ledger.order.filter((n) => disk.includes(n)).concat(disk.filter((n) => !ledger.order.includes(n)));
+  if (!ledger.order.length) { curDir = null; return; }
+  const target = curName && ledger.order.includes(curName) ? curName : ledger.lastOpen || ledger.order[0];
+  curName = null;
+  await openEpisode(target, { noSave: true, force: true });
 }
 
 // ---- バックアップ/復元: 原稿(履歴ごと)+学習データ+設定を1つのJSONに ----
@@ -1996,6 +2054,13 @@ async function main() {
   try { engineSha = sha256hex(await (await fetch('./editor.js')).text()); } catch {}
   logEvt('boot', { layout: sha256hex(JSON.stringify(layout)), engine: engineSha });
   buildCharts(layout);
+  if (!curDir && localStorage.getItem('ne:curFile')) { // 旧・単一ファイル正本からの移行: 親フォルダを作品にする
+    const old = localStorage.getItem('ne:curFile');
+    curDir = old.split('/').slice(0, -1).join('/');
+    curName = old.split('/').pop();
+    localStorage.removeItem('ne:curFile');
+  }
+  await initFileMode();
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('keyup', onKeyup);
   // クリックでカーソル移動(ドラッグ選択は妨げない)。右クリック=選択語の辞書登録
@@ -2055,17 +2120,17 @@ async function main() {
     navigator.mediaDevices.ondevicechange = populateMics;
   const docSel = document.getElementById('doc');
   const nd = document.getElementById('newdoc');
-  if (ipc) { // ファイルが正本: セレクタは隠して開く/新規ボタン
-    if (docSel && docSel.style) docSel.style.display = 'none';
-    if (nd && nd.style) nd.style.display = 'none';
+  if (ipc) { // フォルダ=作品が正本: セレクタ=話リスト、＋=新しい話、開く=フォルダ選択
     const rn2 = document.getElementById('renamedoc');
-    if (rn2 && rn2.style) rn2.style.display = 'none'; // ファイル正本では改名はOSで
-    const ob = document.getElementById('openfile');
+    if (rn2 && rn2.style) rn2.style.display = 'none'; // 改名はOSのファイル名変更で
     const nb = document.getElementById('newfile');
-    if (ob) ob.onclick = openFile;
-    if (nb) nb.onclick = newFile;
+    if (nb && nb.style) nb.style.display = 'none'; // 新規は＋(新しい話)に統合
+    const ob = document.getElementById('openfile');
+    if (ob) ob.onclick = openWork;
+    if (nd) nd.onclick = newEpisode;
+    if (docSel) docSel.onchange = (ev) => openEpisode(ev.target.value);
     const fb = document.getElementById('filename');
-    if (fb) fb.textContent = curFile ? curFile.split('/').pop().replace(/\.txt$/, '') : '(未保存: 新規で場所を決める)';
+    if (fb) fb.textContent = curDir ? curDir.split('/').pop() : '(開くで作品フォルダを選ぶ)';
   } else {
     const ob = document.getElementById('openfile');
     const nb = document.getElementById('newfile');

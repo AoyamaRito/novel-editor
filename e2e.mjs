@@ -837,19 +837,21 @@ ok('音声: かな正規化+表記主権+固有名詞復元');
 }
 ok('声合わせ(聞き癖採取→かな化の正解例示)');
 
-// ---- 51. 作品ファイル形式(本文+メタ同居・自己検証) ----
+// ---- 51. 作品の証明構造(台帳エントリ+旧形式互換) ----
 {
-  const w = globalThis.__neWork.serialize();
-  assert(w.includes('機械用メタ'), 'マーカー入り');
-  const parsed = globalThis.__neWork.parse(w);
-  assert(parsed.verified && parsed.body === plain().replace(/⏎/g, ''), 'roundtrip: 本文一致+sha検証 ✓');
-  assert(parsed.meta.chainHead.length >= 1 && parsed.meta.name, 'メタにチェーン錨と名前');
-  const tampered = w.replace(/。/, '!');
-  assert(globalThis.__neWork.parse(tampered).verified === false, '外部編集(改ざん)を検出');
+  const body = plain().replace(/⏎/g, '');
+  const entry = globalThis.__neWork.entry();
+  assert(globalThis.__neWork.verify(body, entry), '台帳エントリ: 本文shaが検証できる');
+  assert(entry.chainHead && entry.chainHead.length >= 1, '台帳エントリにチェーン錨');
+  assert(globalThis.__neWork.verify(body + '!', entry) === false, '外部編集(改ざん)を検出');
+  // 旧・メタ埋め込み形式も読める(移行互換)
+  const legacy = 'ほんぶん' + '\n――― novel-editor: 以下は機械用メタ(本文はこの行より上) ―――\n' + JSON.stringify({ v: 1, sha: 'x', chainHead: 'y' });
+  const parsed = globalThis.__neWork.parse(legacy);
+  assert(parsed.body === 'ほんぶん' && parsed.meta && parsed.verified === false, '旧形式: 本文剥がし+sha不一致は検出');
   const noMeta = globalThis.__neWork.parse('ただのテキスト\n');
-  assert(noMeta.meta === null && noMeta.body === 'ただのテキスト', 'メタ無しの素txtも開ける');
+  assert(noMeta.meta === null && noMeta.body === 'ただのテキスト', 'メタ無しの素txtも本文として読める');
 }
-ok('作品ファイル(本文+sha+チェーン錨の同居形式)');
+ok('証明構造(台帳sha+チェーン錨、旧埋め込み形式の互換読み)');
 
 // ---- 53. 機能語連鎖はペナルティで壊れない(わたしがやることだよね 一発) ----
 {

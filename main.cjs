@@ -75,6 +75,17 @@ ipcMain.handle('open-dialog', async () => {
   if (r.canceled || !r.filePaths[0]) return null;
   return { path: r.filePaths[0], content: fs.readFileSync(r.filePaths[0], 'utf8') };
 });
+ipcMain.handle('open-dir-dialog', async () => {
+  const r = await dialog.showOpenDialog({
+    defaultPath: path.join(app.getPath('documents'), 'novel-editor'),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+});
+ipcMain.handle('read-abs', (e, { p }) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null));
+ipcMain.handle('list-dir', (e, { p }) => {
+  try { return fs.readdirSync(p).filter((f) => f.endsWith('.txt') && !f.startsWith('.')); } catch { return []; }
+});
 ipcMain.handle('new-dialog', async () => {
   const r = await dialog.showSaveDialog({
     defaultPath: path.join(app.getPath('documents'), 'novel-editor', '新しい作品.txt'),
