@@ -491,9 +491,13 @@ async function voicePipeline(raw, sha) {
       }),
       signal: AbortSignal.timeout(30000),
     });
-    kana = ((await r.json()).choices[0].message.content || '').replace(/[「」\s]/g, '').trim();
+    kana = kataToHira(((await r.json()).choices[0].message.content || '').replace(/[「」\s]/g, '').trim());
     if (!/^[ぁ-んー。、！？…―()（）]+$/.test(kana)) kana = null; // かな化に失敗していたら使わない
   } catch {}
+  if (!kana) {
+    const k2 = kataToHira(raw); // whisperがカタカナで返す癖への保険
+    if (/^[ぁ-んー。、！？…―()（）]+$/.test(k2)) kana = k2;
+  }
   if (!kana) { voiceInsert(raw, sha, { raw }); return; } // フォールバック: whisper出力をそのまま
   // 文節ごとに自前ラティスで表記を決める(自分の辞書・固有名詞・開き癖が効く)
   const parts = kana.split(/([。、！？…―]+)/);
@@ -719,6 +723,7 @@ function toggleSound() {
 }
 
 const hiraToKata = (s) => s.replace(/[ぁ-ん]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60));
+const kataToHira = (s) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
 
 // ---- ローカルLLM審査員(同梱 llama-server / TinySwallow-1.5B) ----
 // 役割は「候補の番号を言う」だけ。文字は一切生成しない=公理0(内容を書かない)は無傷

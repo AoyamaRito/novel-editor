@@ -788,5 +788,14 @@ ok('音声パイプライン(whisper→かな化→ラティス)');
 }
 ok('辞書棚卸し(LLM・userDictは不可侵)');
 
+// ---- 49. 音声: カタカナ書き起こしの正規化 ----
+{
+  down('Enter');
+  llmStub.kanaReply = 'コンニチハ'; // LLMまでカタカナで返した最悪ケース
+  await globalThis.__neVoicePipe('コンニチハ', globalThis.__neSha('v3'));
+  assert(/こんにちは|今日は/.test(plain().slice(-8)), `カタカナが正規化されて変換に乗る: ${plain().slice(-8)}`);
+}
+ok('音声カタカナ正規化');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
