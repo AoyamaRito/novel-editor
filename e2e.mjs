@@ -804,5 +804,22 @@ ok('辞書棚卸し(LLM・userDictは不可侵)');
 }
 ok('音声: かな正規化+表記主権+固有名詞復元');
 
+// ---- 50. 声合わせ(キャリブレーション: 正解つき聞き癖採取) ----
+{
+  const len50 = plain().length; // 本文の長さ(非挿入の検証用)
+  globalThis.__neCalib.start();
+  assert(globalThis.__neCalib.get() && html().includes('声合わせ'), 'キャリブレーション画面が出る');
+  await globalThis.__neVoicePipe('キキマチガイサンプル', globalThis.__neSha('v5'));
+  assert(globalThis.__neCalib.get().idx === 1, '次の文へ進む');
+  const vc = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'vcal').pop();
+  assert(vc && vc.h === 'キキマチガイサンプル' && vc.o, '聞き取り+正解原文がチェーンに記録');
+  // Esc終了
+  down('Escape');
+  assert(!globalThis.__neCalib.get(), 'Escで終了');
+  assert(plain().length === len50, '声合わせ中の音声は本文に挿入されていない');
+  assert(JSON.parse(localStorage.getItem('ne:voiceCal')).length >= 1, '補正ペアが蓄積される');
+}
+ok('声合わせ(聞き癖採取→かな化の正解例示)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

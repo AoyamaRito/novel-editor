@@ -461,6 +461,8 @@ async function toWav16k(arrayBuf) {
   return buf;
 }
 let sttPairs = JSON.parse(localStorage.getItem('ne:sttPairs') || '[]'); // 過去の(raw→かな)補正例
+let voiceCal = JSON.parse(localStorage.getItem('ne:voiceCal') || '[]'); // 音読キャリブレーション(聞き取り→正解かな)
+let calib = null; // {items, idx} 実施中のキャリブレーション
 function voiceInsert(t, sha, extra) {
   if (extra?.raw && extra?.kana) { // 自己改善: 過去の書き起こし補正を次回の例示に使う
     sttPairs.push([extra.raw, extra.kana]);
@@ -486,13 +488,14 @@ function ownSurfaces() {
 }
 // 音声パイプライン: whisper出力 → LLMで全ひらがな化 → 文節ごとに自前変換(辞書・開き癖が効く)
 async function voicePipeline(raw, sha) {
+  if (calib) { calibFeed(raw, sha); return; } // 声合わせ中: 挿入せず(聞き取り→正解)ペアを採取
   let kana = null;
   try {
     const r = await fetch(LLM_URL + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: `次の文を、句読点・記号はそのままに、すべてひらがなに直してください。説明不要、結果のみ。${sttPairs.slice(-3).map(([r2, k2]) => `\n例:「${r2}」→「${k2}」`).join('')}\n文:「${raw}」\n結果:` }],
+        messages: [{ role: 'user', content: `次の文を、句読点・記号はそのままに、すべてひらがなに直してください。説明不要、結果のみ。${voiceCal.slice(-3).map((c2) => `\n例:「${c2.h}」→「${c2.y}」`).join('')}${sttPairs.slice(-2).map(([r2, k2]) => `\n例:「${r2}」→「${k2}」`).join('')}\n文:「${raw}」\n結果:` }],
         temperature: 0, max_tokens: 400,
       }),
       signal: AbortSignal.timeout(30000),
@@ -569,6 +572,29 @@ async function populateMics() {
       .join('');
   } catch {}
 }
+function startCalib() {
+  const ls2 = (drills.lines || []).filter(([s2, y]) => s2.length >= 8 && s2.length <= 24);
+  if (ls2.length < 3) { status('教材が足りません'); return; }
+  const items = [];
+  for (let i = 0; i < 5; i++) items.push(ls2[(Math.random() * ls2.length) | 0]);
+  calib = { items, idx: 0 };
+  render();
+  status('声合わせ: 表示された文を左Cmd押しながら音読→離す(Escで終了)');
+}
+function calibFeed(raw, sha) {
+  const [orig, yomi] = calib.items[calib.idx];
+  voiceCal.push({ h: raw, y: yomi, o: orig });
+  if (voiceCal.length > 50) voiceCal.shift();
+  localStorage.setItem('ne:voiceCal', JSON.stringify(voiceCal));
+  logEvt('vcal', { sha, o: orig, h: raw });
+  calib.idx++;
+  if (calib.idx >= calib.items.length) {
+    calib = null;
+    status(`声合わせ完了: ${voiceCal.length}ペア蓄積(かな化補正の例示に使われます)`);
+  } else status(`声合わせ ${calib.idx + 1}/${calib.items.length}`);
+  render();
+}
+globalThis.__neCalib = { start: startCalib, feed: (r2, s2) => calibFeed(r2, s2), get: () => calib };
 async function micToggle(viaPtt) {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) { status('マイク非対応環境です'); return; }
   if (rec) { rec.stop(); return; }
@@ -1334,7 +1360,8 @@ function tutHint() {
 // ---- キーイベント(配列デコード。シフト面=Shiftキー、判定窓なし) ----
 function onKeydown(e) {
   const code = e.code;
-  if (code === 'MetaLeft' && !e.repeat && !rec && !tut) { micToggle(true); return; } // 左Cmd長押し=プッシュトゥトーク
+  if (code === 'MetaLeft' && !e.repeat && !rec && !tut) { micToggle(true); return; } // 左Cmd長押し=プッシュトゥトーク(声合わせ中も有効)
+  if (code === 'Escape' && calib) { calib = null; render(); status('声合わせを終了しました'); return; }
   if (rec && rec._ptt && code !== 'MetaLeft') rec._cancel = true; // 他キーが来た=ショートカットだった→破棄
   if (!e.repeat || code === 'Backspace')
     logEvt('k', { c: code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h', ...(e.repeat ? { r: 1 } : {}) });
@@ -1528,6 +1555,17 @@ function render() {
     document.body.classList.toggle('with-chart', showChart); // 縦書きのページサイズ計算に反映
   const el = document.getElementById('text');
   if (tut) { renderTut(el); return; }
+  if (calib) {
+    el.classList.add('tut');
+    const [orig] = calib.items[calib.idx];
+    el.innerHTML = `
+    <div class="drill">
+      <div class="stagename">声合わせ ${calib.idx + 1}/${calib.items.length} — 左Cmdを押しながら音読、離すと次へ(Esc=終了)</div>
+      <div class="target${orig.length > 12 ? ' long' : ''}"><span class="rest">${esc(orig)}</span></div>
+      <div class="stats">whisperの聞き間違いを採取して、かな化補正の正解例にします</div>
+    </div>`;
+    return;
+  }
   el.classList.remove('tut');
   if (tategaki) { renderTate(el); return; }
   el.classList.remove('tate');
@@ -1787,7 +1825,9 @@ async function main() {
   };
   document.getElementById('cert').onclick = issueCertificate;
   const micBtn = document.getElementById('mic');
-  if (micBtn) micBtn.onclick = micToggle;
+  if (micBtn) micBtn.onclick = () => micToggle(false);
+  const calBtn = document.getElementById('vcal');
+  if (calBtn) calBtn.onclick = startCalib;
   const micSel = document.getElementById('micsel');
   if (micSel) micSel.onchange = (ev) => { localStorage.setItem('ne:micId', ev.target.value); status('マイクを切り替えました'); };
   populateMics();
