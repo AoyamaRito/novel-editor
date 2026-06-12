@@ -28,6 +28,13 @@ ipcMain.handle('save-file', (e, { name, content }) => {
   fs.writeFileSync(p, content, 'utf8');
   return p;
 });
+ipcMain.handle('append-file', (e, { name, content }) => {
+  const dir = path.join(app.getPath('documents'), 'novel-editor');
+  fs.mkdirSync(dir, { recursive: true });
+  const p = path.join(dir, name);
+  fs.appendFileSync(p, content, 'utf8');
+  return p;
+});
 
 function createWindow() {
   const win = new BrowserWindow({

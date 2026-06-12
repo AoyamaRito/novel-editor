@@ -48,6 +48,7 @@ let convRestore = ''; // 変換キャンセル時に戻す文字列(予測変換
 let candPaths = null; // ラティス候補の分割情報(確定学習用)。従来型候補のときは null
 let closers = []; // 自動閉じカッコ(キャレットの後ろに予約表示、本文はその手前に入る)
 let tategaki = localStorage.getItem('ne:tate') === 'on';
+let chartOn = localStorage.getItem('ne:chart') !== 'off';
 let viewSpread = -1; // -1=最終見開きに追従
 let totalSpreads = 1;
 const PAIR = { '「': '」', '（': '）', '『': '』', '(': ')' };
@@ -121,6 +122,36 @@ function moveCursor(p) {
   render();
 }
 globalThis.__neMove = moveCursor; // e2e 用
+
+// ---- 打鍵・変換イベントログ(書類/novel-editor/log.jsonl、完全ローカル) ----
+// 用途: 配列の実測再最適化(キー間遷移時間)・弱点ドリル・審査員の採用率・速度曲線
+let logBuf = [];
+let logHash = localStorage.getItem('ne:logHash') || '0';
+function fnv(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+function logEvt(type, data) {
+  // 各行が前行のハッシュを含む append-only チェーン。
+  // 決定的エンジン+このログ=原稿を打鍵から再導出できる=「人が書いた」検証可能な証拠
+  const body = JSON.stringify({ t: Date.now(), e: type, ...data, p: logHash });
+  logHash = fnv(logHash + body);
+  localStorage.setItem('ne:logHash', logHash);
+  logBuf.push(body);
+  if (logBuf.length >= 500) flushLog();
+}
+globalThis.__neLogLast = () => logBuf[logBuf.length - 1]; // e2e 用
+function flushLog() {
+  if (!logBuf.length || !ipc) { logBuf = []; return; }
+  const chunk = logBuf.join('\n') + '\n';
+  logBuf = [];
+  ipc.invoke('append-file', { name: 'log.jsonl', content: chunk }).catch(() => {});
+}
+globalThis.__neLogSize = () => logBuf.length; // e2e 用
 
 // ---- コピペ(Electron clipboard。選択範囲は未実装なのでコピーは全文) ----
 const eClipboard = typeof window !== 'undefined' && window.require ? window.require('electron').clipboard : null;
@@ -267,6 +298,7 @@ async function llmRerank(seq) {
     const removed = cands.length - chosen.length;
     if (candPaths) candPaths = chosen.map((c) => candPaths[oldIdx.get(c)]);
     const moved = cands[0] !== chosen[0];
+    logEvt('judge', { y: reading, pick: chosen[0], mv: moved ? 1 : 0, rm: removed });
     cands = chosen;
     if (candIdx >= cands.length) candIdx = 0;
     status(`審査員: ${moved ? `「${chosen[0]}」を第一候補に` : '第一候補を支持'}${removed > 0 ? `・不自然${removed}件を除外` : ''}`);
@@ -421,6 +453,7 @@ function henkan() {
     reading = yomi;
     convRestore = removed;
     cands = list; candPaths = paths; candIdx = 0; mode = 'CAND';
+    logEvt('conv', { y: yomi, c0: list[0] });
     render();
     llmSeq++;
     llmRerank(llmSeq); // 裏で審査員に聞く(候補拘束・非同期・落ちてても無害)
@@ -465,6 +498,7 @@ function confirmCand() {
   }
   localStorage.setItem('ne:userDict', JSON.stringify(userDict));
   rebuildSelfPred(); // 確定学習を予測にも即反映
+  logEvt('pick', { y: reading, s: surf, i: candIdx });
   mode = 'NONE'; reading = ''; candPaths = null;
   const isPair = !tut && surf.length === 2 && PAIR[surf[0]] === surf[1]; // 「」等はカーソルを中に
   const insert = isPair ? surf[0] : surf;
@@ -646,7 +680,7 @@ function tutCheck() {
   }
   const next = tut.path[tut.pi + 1];
   if (tut.buf === next) { tut.pi++; tut.hits++; }
-  else if (tut.buf !== tut.path[tut.pi]) { tut.errors++; tut.buf = tut.path[tut.pi]; flash(); snd.err(); }
+  else if (tut.buf !== tut.path[tut.pi]) { tut.errors++; logEvt('miss', { st: tut.si, at: tut.path[tut.pi + 1]?.slice(-1) }); tut.buf = tut.path[tut.pi]; flash(); snd.err(); }
   if (tut.pi === tut.path.length - 1) drillDone();
 }
 function tutBackspace() {
@@ -677,6 +711,7 @@ function tutHint() {
 // ---- キーイベント(配列デコード。シフト面=Shiftキー、判定窓なし) ----
 function onKeydown(e) {
   const code = e.code;
+  if (!e.repeat) logEvt('k', { c: code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h' });
   document.querySelectorAll(`[data-code="${code}"]`).forEach((k) => k.classList.add('hit'));
   statusKey(code);
 
@@ -833,6 +868,9 @@ function composingHtml() {
 }
 function render() {
   document.querySelectorAll('.key.hint, .key.hint-chord, .key.cross').forEach((k) => k.classList.remove('hint', 'hint-chord', 'cross'));
+  const chartsEl = document.getElementById('charts');
+  if (chartsEl && chartsEl.style)
+    chartsEl.style.display = tut ? '' : !chartOn || tategaki ? 'none' : ''; // 練習中は強制表示、他はオプション(縦書きは常に隠す)
   const el = document.getElementById('text');
   if (tut) { renderTut(el); return; }
   el.classList.remove('tut');
@@ -1054,6 +1092,14 @@ async function main() {
     viewSpread = -1;
     render();
   };
+  const cb = document.getElementById('chartbtn');
+  cb.textContent = chartOn ? '盤' : '盤̸';
+  cb.onclick = () => {
+    chartOn = !chartOn;
+    localStorage.setItem('ne:chart', chartOn ? 'on' : 'off');
+    cb.textContent = chartOn ? '盤' : '盤̸';
+    render();
+  };
   const lb = document.getElementById('llm');
   lb.onclick = () => { llmOn = !llmOn; localStorage.setItem('ne:llm', llmOn ? 'on' : 'off'); updateLlmBtn(); };
   updateLlmBtn();
@@ -1075,6 +1121,7 @@ async function main() {
   sel.onchange = () => { if (tut) startTut(Number(sel.value)); };
   setInterval(() => { if (!tut && text !== (manuscript.content || '')) save(); }, 10000); // 10秒ごと自動保存
   setInterval(llmHarvest, 60000); // 1分ごとに固有名詞の採取
+  setInterval(flushLog, 30000); // 打鍵ログの書き出し
   if (typeof window !== 'undefined')
     window.addEventListener('beforeunload', () => { if (text !== (manuscript.content || '')) save(); });
   render();

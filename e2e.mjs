@@ -500,5 +500,22 @@ assert(plain().includes('はろーぴこ\n'), '途中貼り付け');
 globalThis.__neMove(plain().length);
 ok('コピペ(貼り付け・正規化・途中挿入)');
 
+// ---- 31. 打鍵ログ ----
+const lg0 = globalThis.__neLogSize();
+await typeWord('か');
+down('Space');
+down('Enter');
+assert(globalThis.__neLogSize() > lg0, '打鍵・変換イベントがログに積まれる');
+const last = JSON.parse(globalThis.__neLogLast());
+assert(typeof last.p === 'string' && last.p.length >= 1, 'ログはハッシュチェーン(前行ハッシュ p 付き)');
+ok('打鍵ログ(keydown/conv/pick+ハッシュチェーン=人が書いた証拠)');
+
+// ---- 32. 配列チャートの表示オプション ----
+el('chartbtn').onclick();
+assert(localStorage.getItem('ne:chart') === 'off', '盤OFFが永続化');
+el('chartbtn').onclick();
+assert(localStorage.getItem('ne:chart') === 'on', '盤ONに戻る');
+ok('配列チャート表示オプション');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
