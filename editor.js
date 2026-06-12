@@ -75,8 +75,9 @@ function listDocs() { return graph.all().filter((b) => b.type === 'text'); }
 function refreshDocSel() {
   const sel = document.getElementById('doc');
   if (!sel) return;
+  const escAttr = (x) => esc(x).replace(/"/g, '&quot;');
   sel.innerHTML = listDocs()
-    .map((b) => `<option value="${b.id}"${b.id === curDocId ? ' selected' : ''}>${b.id.replace('novel:', '')}</option>`)
+    .map((b) => `<option value="${escAttr(b.id)}"${b.id === curDocId ? ' selected' : ''}>${esc(b.id.replace('novel:', ''))}</option>`)
     .join('');
 }
 function switchDoc(id) {
@@ -128,7 +129,7 @@ async function save() {
     } catch (e) { where = 'localStorage(ディスク保存失敗)'; }
   }
   status(`保存 (${r.action}) — 履歴 ${manuscript.totalHistory} 版 → ${where}`);
-  logEvt('state', { sha: sha256hex(text), len: text.length }); // 原稿状態の時系列をチェーンに固定(リプレイ非依存の証明)
+  logEvt('state', { sha: sha256hex(text), len: text.length, d: curDocId }); // 原稿状態の時系列をチェーンに固定(作品ID付き)
   llmHarvest(); // 保存のついでに原稿から固有名詞を採取
 }
 
@@ -182,13 +183,13 @@ function undo() {
   if (!undoStack.length) return;
   redoStack.push({ text, cursor, committedTo });
   applyState(undoStack.pop());
-  logEvt('undo', {});
+  logEvt('undo', { sha: sha256hex(text), len: text.length }); // 復元結果を固定(リプレイ乖離の検出点)
 }
 function redo() {
   if (!redoStack.length) return;
   undoStack.push({ text, cursor, committedTo });
   applyState(redoStack.pop());
-  logEvt('redo', {});
+  logEvt('redo', { sha: sha256hex(text), len: text.length });
 }
 
 // カーソル移動: 未確定と予約閉じを片付けてから動く(置き去り事故防止)
@@ -321,7 +322,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     else if (e.e === 'pick') st.pick++;
     else if (e.e === 'paste') st.paste.push({ at: new Date(e.t).toISOString(), len: [...(e.s || '')].length });
     else if (e.e === 'import') st.imports++;
-    else if (e.e === 'state') st.states.push({ at: new Date(e.t).toISOString(), sha: e.sha, len: e.len });
+    else if (e.e === 'state') { if (!e.d || e.d === curDocId) st.states.push({ at: new Date(e.t).toISOString(), sha: e.sha, len: e.len }); }
   }
   const pasteTotal = st.paste.reduce((a, p) => a + p.len, 0);
   const chainOk = broken < 0 && (!expectedHead || head === expectedHead);
@@ -330,7 +331,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
   return [
     '# 著者証明レポート(novel-editor)',
     `発行: ${new Date().toISOString()}`,
-    `対象原稿: ${text.length}字 / sha256: ${sha256hex(text)}`,
+    `対象原稿: ${curDocId.replace('novel:', '')}(${curDocId})/ ${text.length}字 / sha256: ${sha256hex(text)}`,
     '',
     '## 打鍵チェーン検証(SHA-256)',
     `- 記録イベント: ${lines.length}行`,
@@ -352,7 +353,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     ...st.paste.slice(-20).map((p) => `  - ${fmt(p.at)} に ${p.len}字`),
     `- バックアップ復元: ${st.imports}件`,
     '',
-    '## 原稿状態チェックポイント(保存毎にチェーンへ固定)',
+    '## 原稿状態チェックポイント(対象作品のみ・保存毎にチェーンへ固定)',
     `- ${st.states.length}件。直近:`,
     ...st.states.slice(-5).map((x) => `  - ${fmt(x.at)} / ${x.len}字 / sha256 ${x.sha.slice(0, 12)}…`),
     '',
@@ -1175,7 +1176,7 @@ function layoutLines(tokens) {
 globalThis.__neLayout = layoutLines; // e2e 用
 
 // ---- 描画 ----
-const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const escNL = (s) => esc(s).replace(/\n/g, '<span class="nl">⏎</span>\n'); // 改行マーク表示
 function composingHtml() {
   if (mode === 'CAND')

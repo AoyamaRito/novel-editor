@@ -597,9 +597,11 @@ await typeWord('かきく');
 down('Enter'); // かな確定
 down('KeyZ', { metaKey: true });
 assert(plain() === base38, `Undoでバースト前へ: ${JSON.stringify(plain().slice(-4))}`);
+const undoEvt = JSON.parse(globalThis.__neLogLast());
+assert(undoEvt.e === 'undo' && undoEvt.sha?.length === 64, 'undoが結果ダイジェスト付きで記録される');
 down('KeyZ', { metaKey: true, shiftKey: true });
 assert(plain().endsWith('　かきく'), 'Redoで復元');
-ok('Undo/Redo(Cmd+Z / Cmd+Shift+Z)');
+ok('Undo/Redo(Cmd+Z / Cmd+Shift+Z+結果固定)');
 
 // ---- 39. 複数原稿 ----
 const txt39 = plain();
@@ -611,8 +613,14 @@ globalThis.__neDoc('novel:manuscript');
 assert(plain() === txt39, '元の作品が無傷で戻る');
 globalThis.__neDoc('novel:test2');
 assert(plain().includes('にさくめ'), '二作目の内容も保持');
+globalThis.__neDoc('novel:<タグ>');
+assert(!el('doc').innerHTML.includes('<タグ>') && el('doc').innerHTML.includes('&lt;タグ&gt;'), '作品名はエスケープされる');
 globalThis.__neDoc('novel:manuscript');
-ok('複数原稿の切替(内容が独立保持)');
+el('save').onclick();
+await wait(30);
+const stEvt = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'state').pop();
+assert(stEvt && stEvt.d === 'novel:manuscript', 'stateイベントに作品IDが乗る');
+ok('複数原稿の切替(独立保持+エスケープ+state作品ID)');
 
 // ---- 40. 検索+縦書きページスライダー ----
 const pos40 = globalThis.__neFind('髪');
