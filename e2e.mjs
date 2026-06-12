@@ -49,7 +49,10 @@ globalThis.fetch = async (p, opts = {}) => {
     if (url.endsWith('/health')) return { json: async () => ({ status: 'ok' }) };
     // /v1/chat/completions: 審査員 or 採取の偽応答
     const pr = JSON.parse(opts.body).messages[0].content;
-    if (pr.includes('固有名詞')) {
+    if (pr.includes('品詞を、次から一語')) {
+      return { json: async () => ({ choices: [{ message: { content: llmStub.posReply || '固有名詞' } }] }) };
+    }
+    if (pr.includes('固有名詞(人名')) {
       llmStub.harvestCalls++;
       return { json: async () => ({ choices: [{ message: { content: llmStub.harvest } }] }) };
     }
@@ -721,6 +724,24 @@ ok('先読み審査(入力中に審査→Space即適用)');
   llmStub.reply = '1';
 }
 ok('ガリガリ打ち耐性(常時追走+非同期着地)');
+
+// ---- 45. 右クリック登録(読み手入力+LLM品詞特定) ----
+{
+  llmStub.posReply = '固有名詞';
+  await globalThis.__neReg('竜胆', 'りんどう', -1);
+  await wait(40);
+  down('Enter');
+  await typeWord('りんどう');
+  down('Space');
+  await wait(60);
+  const reg45 = html().match(/class="cand">▼([^<]*)</)?.[1];
+  assert(reg45 === '竜胆', `登録語が第一候補: ${reg45}`);
+  down('Enter');
+  const evs = globalThis.__neLogAll().map((l) => JSON.parse(l));
+  assert(evs.some((x) => x.e === 'reg' && x.s === '竜胆'), '登録がチェーンに記録');
+  assert(evs.some((x) => x.e === 'regpos' && x.pos === '固有名詞'), 'LLMの品詞特定が記録');
+}
+ok('右クリック登録(読み+品詞特定)');
 
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

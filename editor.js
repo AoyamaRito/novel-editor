@@ -49,6 +49,7 @@ let symJump = 0; // 句読点を透かして変換した時、確定後にカー
 let undoStack = [], redoStack = [], lastSnapT = 0; // Undo/Redo(状態スナップショット)
 let curDocId = localStorage.getItem('ne:curDoc') || 'novel:manuscript'; // 複数原稿
 let lastQuery = ''; // 検索
+let posDict = JSON.parse(localStorage.getItem('ne:posDict') || '{}'); // 手動登録語の品詞(読み\t表記 -> 品詞)
 let followCaret = true, progScroll = false, wheelAcc = 0; // スクロール追従の解放
 let candPaths = null; // ラティス候補の分割情報(確定学習用)。従来型候補のときは null
 let closers = []; // 自動閉じカッコ(キャレットの後ろに予約表示、本文はその手前に入る)
@@ -103,6 +104,38 @@ function newDoc() {
   switchDoc('novel:' + name.trim());
 }
 globalThis.__neDoc = switchDoc; // e2e 用
+
+async function registerWord(surf, yomi, at) {
+  (userDict[yomi] ??= {});
+  userDict[yomi][surf] = (userDict[yomi][surf] || 0) + 3; // 手動登録は強め
+  localStorage.setItem('ne:userDict', JSON.stringify(userDict));
+  rebuildSelfPred();
+  logEvt('reg', { y: yomi, s: surf });
+  status(`登録: ${surf}(${yomi})`);
+  render();
+  if (!llmReady || !llmOn) return;
+  try { // 品詞はLLMが文脈から特定(失敗しても登録自体は成立)
+    const p0 = at >= 0 ? at : text.indexOf(surf);
+    const ctx = text.slice(Math.max(0, p0 - 40), Math.max(0, p0) + surf.length + 40);
+    const r = await fetch(LLM_URL + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: `次の文脈における語「${surf}」の品詞を、次から一語だけで答えてください: 固有名詞/名詞/動詞/形容詞/副詞/その他\n文脈:「${ctx}」\n品詞:` }],
+        temperature: 0, max_tokens: 8,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const pos = ((await r.json()).choices[0].message.content.match(/(固有名詞|名詞|動詞|形容詞|副詞|その他)/) || [])[1];
+    if (pos) {
+      posDict[yomi + '\t' + surf] = pos;
+      localStorage.setItem('ne:posDict', JSON.stringify(posDict));
+      logEvt('regpos', { y: yomi, s: surf, pos });
+      status(`登録: ${surf}(${yomi})・品詞=${pos}`);
+    }
+  } catch {}
+}
+globalThis.__neReg = registerWord; // e2e 用
 
 function findNext(q) {
   if (!q) return -1;
@@ -1489,9 +1522,10 @@ async function main() {
   buildCharts(layout);
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('keyup', onKeyup);
-  // クリックでカーソル移動(確認→必要なら改行を入れて書き始める)
-  document.getElementById('text').addEventListener?.('mousedown', (ev) => {
-    if (tut) return;
+  // クリックでカーソル移動(ドラッグ選択は妨げない)。右クリック=選択語の辞書登録
+  document.getElementById('text').addEventListener?.('click', (ev) => {
+    if (tut || ev.button !== 0) return;
+    if (typeof window !== 'undefined' && !window.getSelection?.().isCollapsed) return; // 選択中は移動しない
     const p = clickOffset(ev);
     if (p == null || p === cursor) return;
     ev.preventDefault();
@@ -1500,6 +1534,16 @@ async function main() {
     const midLine = cursor > 0 && text[cursor - 1] !== '\n' && cursor < text.length && text[cursor] !== '\n';
     if (midLine && window.confirm('改行を入れてから書きますか?')) { logEvt('ins', { s: '\n' }); out('\n'); }
     render();
+  });
+  document.getElementById('text').addEventListener?.('contextmenu', (ev) => {
+    if (tut) return;
+    const surf = (typeof window !== 'undefined' ? window.getSelection?.().toString() : '').trim();
+    if (!surf || surf.length > 20 || surf.includes('\n')) return;
+    ev.preventDefault();
+    const yomi = window.prompt(`「${surf}」の読み(ひらがな):`);
+    if (!yomi) return;
+    if (!/^[ぁ-んー]+$/.test(yomi.trim())) { status('読みはひらがなで入力してください'); return; }
+    registerWord(surf, yomi.trim(), clickOffset(ev) ?? -1);
   });
   // システムIMEがONだと打鍵がOSに横取りされる → 検知して警告
   document.addEventListener('compositionstart', () => {
