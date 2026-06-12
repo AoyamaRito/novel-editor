@@ -13,7 +13,7 @@
   header button:hover { border-color: var(--accent); color: var(--accent); }
   #mode { font-size: 16px; width: 24px; text-align: center; color: var(--accent); font-weight: bold; }
   #count { color: #888; margin-left: auto; }
-  #text { flex: 1; overflow-y: auto; padding: 24px 32px; font-size: 17px; line-height: 2.0; white-space: pre-wrap; word-break: break-all; outline: none; }
+  #text { flex: 1; overflow-y: auto; padding: 24px 32px 48vh; font-size: 17px; line-height: 2.0; white-space: pre-wrap; word-break: break-all; outline: none; position: relative; }
   .mark { background: #dcefe5; border-bottom: 2px solid var(--accent); }
   .cand { background: var(--accent); color: #fff; border-radius: 2px; padding: 0 2px; }
   .conv-flash { color: var(--accent); background: #dcefe5; border-radius: 2px; }
@@ -56,9 +56,9 @@
   #text.tate { display: flex; align-items: center; justify-content: center; padding: 10px; background: #efece4; }
   .spread { display: flex; flex-direction: row-reverse; gap: 22px; }
   .page { background: #fffdf8; border: 1px solid #d8d2c4; box-shadow: 0 2px 8px rgba(0,0,0,.10); padding: 16px 12px 6px; position: relative; }
-  .pagein { writing-mode: vertical-rl; font-size: 12.5px; line-height: 1.85; height: 42em; }
+  .pagein { writing-mode: vertical-rl; font-size: 12.5px; line-height: 1.85; height: 42em; width: calc(17 * 1.85em); background: repeating-linear-gradient(to left, rgba(60,90,70,.06) 0 1px, transparent 1px calc(1.85em)); }
   .pagein .vl { height: 42em; }
-  .pagein .caret { width: 0.9em; height: 2px; }
+  .pagein .caret { display: inline-block; width: 1em; height: 3px; background: #c2571a; }
   .pageno { text-align: center; font-family: sans-serif; font-size: 10px; color: #999; padding-top: 4px; }
   #text.tut { display: flex; align-items: center; justify-content: center; }
   .drill { text-align: center; font-family: sans-serif; }

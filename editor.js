@@ -41,7 +41,8 @@ let reading = '', cands = [], candIdx = 0;
 let graph, manuscript;
 let tut = null; // 練習モード状態
 let lastConv = null, lastConvTimer = null; // 直近の変換確定区間(ハイライト用)
-let committedTo = 0; // text のうち確定済みの長さ。以降の末尾かな列=未確定(青字・変換対象)
+let committedTo = 0; // 未確定領域の開始。committedTo..cursor の末尾かな列=未確定(青字・変換対象)
+let cursor = 0; // 挿入位置(キャレット)。クリック/矢印で移動できる
 let selfPred = [];   // 予測用: 自分の語彙(コーパス+確定学習)の [読み, スコア]
 let convRestore = ''; // 変換キャンセル時に戻す文字列(予測変換では打った分だけ戻す)
 let candPaths = null; // ラティス候補の分割情報(確定学習用)。従来型候補のときは null
@@ -61,7 +62,8 @@ function initStore() {
     graph.add(manuscript);
   }
   text = manuscript.content || '';
-  committedTo = text.length;
+  cursor = text.length;
+  committedTo = cursor;
 }
 // Electron 上では 書類/novel-editor/ に実ファイルとしても自動保存(ブラウザ実行時は localStorage のみ)
 const ipc = typeof window !== 'undefined' && window.require ? window.require('electron').ipcRenderer : null;
@@ -87,18 +89,57 @@ function out(s) {
   viewSpread = -1; // 書いたら最終見開きへ戻る
   if (s && s !== '\n') {
     const first = s[0];
+    const before = text.slice(0, cursor);
     // 地の文の行頭は全角一字下げ(小説作法)
-    if ((text === '' || text.endsWith('\n')) && !NO_INDENT.has(first)) text += '　';
+    if ((cursor === 0 || before.endsWith('\n')) && !NO_INDENT.has(first)) {
+      text = before + '　' + text.slice(cursor); cursor++;
+    }
     // ！？の後に文が続くなら全角アキ
-    else if (/[！？]$/.test(text) && !'」』）！？。、　\n'.includes(first)) text += '　';
+    else if (/[！？]$/.test(before) && !'」』）！？。、　\n'.includes(first)) {
+      text = before + '　' + text.slice(cursor); cursor++;
+    }
     // 閉じ括弧の前の句点は落とす(「〜だ。」→「〜だ」)
-    if (first === '」' && text.endsWith('。')) {
-      text = text.slice(0, -1);
-      committedTo = Math.min(committedTo, text.length);
+    if (first === '」' && text.slice(0, cursor).endsWith('。')) {
+      text = text.slice(0, cursor - 1) + text.slice(cursor);
+      cursor--;
+      committedTo = Math.min(committedTo, cursor);
     }
   }
-  text += s;
-  if (!/^[ぁ-んー]+$/.test(s)) committedTo = text.length; // 記号・改行・漢字は打った時点で確定
+  text = text.slice(0, cursor) + s + text.slice(cursor);
+  cursor += s.length;
+  if (!/^[ぁ-んー]+$/.test(s)) committedTo = cursor; // 記号・改行・漢字は打った時点で確定
+}
+
+// カーソル移動: 未確定と予約閉じを片付けてから動く(置き去り事故防止)
+function moveCursor(p) {
+  if (tut) return;
+  if (mode === 'CAND') cancel();
+  while (closers.length) out(closers.pop());
+  committedTo = cursor;
+  cursor = Math.max(0, Math.min(text.length, p));
+  committedTo = cursor;
+  render();
+}
+globalThis.__neMove = moveCursor; // e2e 用
+
+// クリック位置 → 本文オフセット(縦書きは data-i、横書きは caretRangeFromPoint で算出)
+function clickOffset(ev) {
+  const t = ev.target?.closest?.('[data-i]');
+  if (t) return Number(t.dataset.i);
+  if (typeof document.caretRangeFromPoint !== 'function') return null;
+  const r = document.caretRangeFromPoint(ev.clientX, ev.clientY);
+  if (!r) return null;
+  const SKIP = new Set(['ghost', 'closers', 'candinfo', 'cand', 'caret']);
+  let off = 0, found = false;
+  const walk = (node) => {
+    if (found) return;
+    if (node === r.startContainer) { off += r.startOffset; found = true; return; }
+    if (node.nodeType === 3) { off += node.textContent.length; return; }
+    if (node.classList && [...node.classList].some((c) => SKIP.has(c))) return;
+    for (const ch of node.childNodes) walk(ch);
+  };
+  walk(document.getElementById('text'));
+  return found ? Math.min(off, text.length) : null;
 }
 
 // ---- 変換 ----
@@ -176,7 +217,7 @@ async function llmInit() {
 async function llmRerank(seq) {
   if (!llmReady || !llmOn || tut || cands.length < 2) return;
   // 文脈は「直前の1〜2文」だけを文境界で切って渡す(ぶつ切りより判断が安定する)
-  const sentences = text.split(/(?<=[。！？\n])/).filter((x) => x.trim());
+  const sentences = text.slice(0, cursor).split(/(?<=[。！？\n])/).filter((x) => x.trim());
   const context = sentences.slice(-2).join('').slice(-120);
   const list = cands.slice(0, Math.min(8, cands.length));
   const prompt = `日本語のかな漢字変換の候補審査です。文脈の続きとして自然な候補の番号だけを、自然な順にカンマ区切りで挙げてください。不自然な候補は含めないでください。\n文脈:「${context}」\n候補:\n${list.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n番号:`;
@@ -274,7 +315,7 @@ function rebuildSelfPred() {
 }
 function predict() {
   if (tut || mode !== 'NONE') return null;
-  const run = text.slice(committedTo).match(/[ぁ-んー]+$/)?.[0];
+  const run = text.slice(committedTo, cursor).match(/[ぁ-んー]+$/)?.[0];
   if (!run || run.length < 2) return null;
   for (let len = Math.min(run.length, 10); len >= 2; len--) {
     const S = run.slice(-len);
@@ -328,19 +369,21 @@ function henkan() {
   if (mode === 'CAND') { snd.cycle(); candIdx = (candIdx + 1) % cands.length; render(); return; }
   if (mode !== 'NONE') return;
   const src = tut ? tut.buf : text;
+  const upto = tut ? src.length : cursor;
   // ……は記号変換の入口: ――(棒線)や括弧ペア(カーソルが中に来る)へ。――からは逆方向も
-  const tail2 = src.slice(-2);
+  const tail2 = src.slice(upto - 2, upto);
   if (!tut && (tail2 === '……' || tail2 === '――')) {
     const others = tail2 === '……' ? ['――', '「」', '『』', '（）'] : ['……', '「」', '『』', '（）'];
-    text = src.slice(0, -2);
-    committedTo = Math.min(committedTo, text.length);
+    text = text.slice(0, cursor - 2) + text.slice(cursor);
+    cursor -= 2;
+    committedTo = Math.min(committedTo, cursor);
     reading = tail2;
     convRestore = tail2;
     cands = [...others, tail2]; candPaths = null; candIdx = 0; mode = 'CAND';
     render();
     return;
   }
-  const m = (tut ? src : src.slice(committedTo)).match(/[ぁ-んー]+$/); // 未確定領域だけが変換対象
+  const m = (tut ? src : src.slice(committedTo, cursor)).match(/[ぁ-んー]+$/); // 未確定領域だけが変換対象
   if (!m) return;
   const run = m[0];
   let exact = null;
@@ -350,8 +393,11 @@ function henkan() {
   }
   const pred = predict();
   const begin = (yomi, removed, list, paths) => {
-    const keep = src.slice(0, src.length - removed.length);
-    if (tut) tut.buf = keep; else text = keep;
+    if (tut) tut.buf = src.slice(0, src.length - removed.length);
+    else {
+      text = text.slice(0, cursor - removed.length) + text.slice(cursor);
+      cursor -= removed.length;
+    }
     reading = yomi;
     convRestore = removed;
     cands = list; candPaths = paths; candIdx = 0; mode = 'CAND';
@@ -403,13 +449,13 @@ function confirmCand() {
   const isPair = !tut && surf.length === 2 && PAIR[surf[0]] === surf[1]; // 「」等はカーソルを中に
   const insert = isPair ? surf[0] : surf;
   if (!tut && insert !== '') {
-    lastConv = { pos: text.length, len: insert.length, until: Date.now() + 1200 };
+    lastConv = { pos: cursor, len: insert.length, until: Date.now() + 1200 };
     clearTimeout(lastConvTimer);
     lastConvTimer = setTimeout(render, 1250);
   }
   if (isPair) closers.push(surf[1]);
   out(insert);
-  if (!tut) committedTo = text.length; // 変換の決定=確定
+  if (!tut) committedTo = cursor; // 変換の決定=確定
   snd.conv();
 }
 function cancel() {
@@ -431,8 +477,8 @@ function emit(ch) {
       const last = tut.buf.slice(-1);
       if (CYCLE[last]) { tut.buf = tut.buf.slice(0, -1) + CYCLE[last]; tutCheck(); }
     } else {
-      const last = text.slice(-1);
-      if (CYCLE[last]) text = text.slice(0, -1) + CYCLE[last];
+      const last = text.slice(cursor - 1, cursor);
+      if (CYCLE[last]) text = text.slice(0, cursor - 1) + CYCLE[last] + text.slice(cursor);
     }
   } else {
     if (!tut) {
@@ -446,10 +492,13 @@ function emit(ch) {
 function backspace() {
   if (mode === 'CAND') { cancel(); return; } // 候補をやめてかなに戻す
   if (tut) { tutBackspace(); return; }
-  const lastCh = text.slice(-1);
+  if (cursor === 0) return;
+  const lastCh = text.slice(cursor - 1, cursor);
   if (PAIR[lastCh] && closers[closers.length - 1] === PAIR[lastCh]) closers.pop();
-  text = text.slice(0, text.endsWith('……') ? -2 : -1); // ……は単位で消す
-  committedTo = Math.min(committedTo, text.length);
+  const delN = text.slice(cursor - 2, cursor) === '……' ? 2 : 1; // ……は単位で消す
+  text = text.slice(0, cursor - delN) + text.slice(cursor);
+  cursor -= delN;
+  committedTo = Math.min(committedTo, cursor);
   render();
 }
 
@@ -628,6 +677,11 @@ function onKeydown(e) {
     return;
   }
   if (code === 'Escape' && tut) { stopTut(); return; }
+  if (!tut && (code === 'ArrowLeft' || code === 'ArrowRight')) {
+    e.preventDefault();
+    moveCursor(cursor + (code === 'ArrowLeft' ? -1 : 1));
+    return;
+  }
   if (tategaki && (code === 'PageUp' || code === 'PageDown')) {
     e.preventDefault();
     const cur = viewSpread < 0 ? totalSpreads - 1 : viewSpread;
@@ -652,17 +706,18 @@ function onKeydown(e) {
     }
     if (mode !== 'NONE') return;
     const src = tut ? tut.buf : text;
-    const m = (tut ? src : src.slice(committedTo)).match(/[ぁ-んー]+$/);
+    const m = (tut ? src : src.slice(committedTo, cursor)).match(/[ぁ-んー]+$/);
     if (!m) return;
     const run = m[0], kata = hiraToKata(run);
     if (tut) { tut.buf = src.slice(0, src.length - run.length) + kata; tutCheck(); }
     else {
-      text = src.slice(0, src.length - run.length);
-      lastConv = { pos: text.length, len: kata.length, until: Date.now() + 1200 };
+      const start = cursor - run.length;
+      text = text.slice(0, start) + kata + text.slice(cursor);
+      cursor = start + kata.length;
+      lastConv = { pos: start, len: kata.length, until: Date.now() + 1200 };
       clearTimeout(lastConvTimer);
       lastConvTimer = setTimeout(render, 1250);
-      text += kata;
-      committedTo = text.length;
+      committedTo = cursor;
     }
     render(); return;
   }
@@ -683,9 +738,9 @@ function onKeydown(e) {
       render(); return; // Enter=変換の決定(改行しない)
     }
     if (tut) { tut.errors++; loadDrill(); return; } // Enter=この問をスキップ
-    if (text.length > committedTo || closers.length) { // 未確定かな確定+予約閉じの実体化。改行はしない
+    if (cursor > committedTo || closers.length) { // 未確定かな確定+予約閉じの実体化。改行はしない
       while (closers.length) out(closers.pop());
-      committedTo = text.length;
+      committedTo = cursor;
       render(); return;
     }
     out('\n');
@@ -754,9 +809,9 @@ function render() {
   el.classList.remove('tut');
   if (tategaki) { renderTate(el); return; }
   el.classList.remove('tate');
-  // 未確定の末尾かな列(青字)
-  const pendM = text.slice(committedTo).match(/[ぁ-んー]+$/);
-  const pendStart = text.length - (pendM ? pendM[0].length : 0);
+  // 未確定のかな列(青字)はカーソル直前
+  const pendM = text.slice(committedTo, cursor).match(/[ぁ-んー]+$/);
+  const pendStart = cursor - (pendM ? pendM[0].length : 0);
   const head = text.slice(0, pendStart);
   let body;
   if (lastConv && Date.now() < lastConv.until && head.length >= lastConv.pos + lastConv.len) {
@@ -769,13 +824,17 @@ function render() {
     lastConv = null;
     body = esc(head);
   }
-  if (pendStart < text.length) body += `<span class="pend">${esc(text.slice(pendStart))}</span>`;
+  if (pendStart < cursor) body += `<span class="pend">${esc(text.slice(pendStart, cursor))}</span>`;
   const pr = predict(); // 予測ゴースト(薄青)
   el.innerHTML =
     body + composingHtml() + '<span class="caret"></span>' +
     (pr ? `<span class="ghost">${esc(pr.ghost)}</span>` : '') +
-    (closers.length ? `<span class="closers">${esc(closers.slice().reverse().join(''))}</span>` : '');
-  el.scrollTop = el.scrollHeight;
+    (closers.length ? `<span class="closers">${esc(closers.slice().reverse().join(''))}</span>` : '') +
+    esc(text.slice(cursor));
+  // タイプライタースクロール: 入力中の行を常に画面の縦中央へ
+  const caretEl = el.querySelector('.caret');
+  if (caretEl && typeof caretEl.offsetTop === 'number')
+    el.scrollTop = Math.max(0, caretEl.offsetTop - el.clientHeight * 0.5);
   document.getElementById('mode').textContent =
     mode === 'NONE' ? '─' : '▼';
   document.getElementById('count').textContent = `${text.length}字`;
@@ -783,21 +842,24 @@ function render() {
 function renderTate(el) {
   el.classList.add('tate');
   const tokens = [];
-  const pushStr = (str, cls) => { for (const c of str) tokens.push({ c, cls }); };
-  const pendM = text.slice(committedTo).match(/[ぁ-んー]+$/);
-  const pendStart = text.length - (pendM ? pendM[0].length : 0);
+  let ti = 0; // 本文の絶対位置(クリックでのカーソル移動用)
+  const pushText = (str, cls) => { for (const c of str) tokens.push({ c, cls, i: ti++ }); };
+  const pushUi = (str, cls) => { for (const c of str) tokens.push({ c, cls, i: null }); };
+  const pendM = text.slice(committedTo, cursor).match(/[ぁ-んー]+$/);
+  const pendStart = cursor - (pendM ? pendM[0].length : 0);
   const head = text.slice(0, pendStart);
   if (lastConv && Date.now() < lastConv.until && head.length >= lastConv.pos + lastConv.len) {
-    pushStr(head.slice(0, lastConv.pos));
-    pushStr(head.slice(lastConv.pos, lastConv.pos + lastConv.len), 'conv-flash');
-    pushStr(head.slice(lastConv.pos + lastConv.len));
-  } else { lastConv = null; pushStr(head); }
-  pushStr(text.slice(pendStart), 'pend');
-  if (mode === 'CAND') pushStr('▼' + cands[candIdx], 'cand');
+    pushText(head.slice(0, lastConv.pos));
+    pushText(head.slice(lastConv.pos, lastConv.pos + lastConv.len), 'conv-flash');
+    pushText(head.slice(lastConv.pos + lastConv.len));
+  } else { lastConv = null; pushText(head); }
+  pushText(text.slice(pendStart, cursor), 'pend');
+  if (mode === 'CAND') pushUi('▼' + cands[candIdx], 'cand');
   tokens.push({ caret: true });
   const pr = predict();
-  if (pr) pushStr(pr.ghost, 'ghost');
-  if (closers.length) pushStr(closers.slice().reverse().join(''), 'closers');
+  if (pr) pushUi(pr.ghost, 'ghost');
+  if (closers.length) pushUi(closers.slice().reverse().join(''), 'closers');
+  pushText(text.slice(cursor));
 
   const lines = layoutLines(tokens);
   const pages = [];
@@ -806,7 +868,10 @@ function renderTate(el) {
   const si = viewSpread < 0 ? totalSpreads - 1 : Math.min(viewSpread, totalSpreads - 1);
   const lineHtml = (ln) =>
     '<div class="vl">' +
-    ln.map((t) => (t.caret ? '<span class="caret"></span>' : t.cls ? `<span class="${t.cls}">${esc(t.c)}</span>` : esc(t.c))).join('') +
+    ln.map((t) =>
+      t.caret ? '<span class="caret"></span>'
+      : `<span${t.i != null ? ` data-i="${t.i}"` : ''}${t.cls ? ` class="${t.cls}"` : ''}>${esc(t.c)}</span>`
+    ).join('') +
     '</div>';
   const pageHtml = (pg, num) =>
     `<div class="page"><div class="pagein">${(pg || []).map(lineHtml).join('')}</div><div class="pageno">${num}</div></div>`;
@@ -927,6 +992,18 @@ async function main() {
   buildCharts(layout);
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('keyup', onKeyup);
+  // クリックでカーソル移動(確認→必要なら改行を入れて書き始める)
+  document.getElementById('text').addEventListener?.('mousedown', (ev) => {
+    if (tut) return;
+    const p = clickOffset(ev);
+    if (p == null || p === cursor) return;
+    ev.preventDefault();
+    if (!window.confirm('カーソルをここに移動して書きますか?')) return;
+    moveCursor(p);
+    const midLine = cursor > 0 && text[cursor - 1] !== '\n' && cursor < text.length && text[cursor] !== '\n';
+    if (midLine && window.confirm('改行を入れてから書きますか?')) out('\n');
+    render();
+  });
   // システムIMEがONだと打鍵がOSに横取りされる → 検知して警告
   document.addEventListener('compositionstart', () => {
     status('⚠ システムの日本語IMEがONです。メニューバーから入力ソースをABC(英数)にしてください');

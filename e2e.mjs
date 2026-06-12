@@ -455,5 +455,29 @@ el('tate').onclick(); // 戻す
 assert(!html().includes('class="spread"'), '横書きに復帰');
 ok('縦書き(電撃文庫42×17・ぶら下がり・禁則・見開き)');
 
+// ---- 28. 挿入編集(カーソル移動・途中挿入・途中変換・矢印) ----
+llmStub.reply = '1';
+down('Enter'); down('Enter');
+await typeWord('かきく');
+down('Enter'); // 確定(改行なし)
+const L28 = plain().length;
+globalThis.__neMove(L28 - 2); // か|きく の間へ
+await typeWord('さ');
+assert(plain().endsWith('　かさきく'), `途中挿入: ${plain().slice(-6)}`);
+assert(html().indexOf('class="caret"') < html().length && plain().length === L28 + 1, 'tailが描画され文字数が合う');
+down('Backspace');
+assert(plain().endsWith('　かきく'), '途中削除');
+down('ArrowLeft');
+await typeWord('た');
+assert(plain().endsWith('　たかきく'), `矢印移動+挿入: ${plain().slice(-6)}`);
+// 途中での変換
+globalThis.__neMove(plain().length - 1); // 最後の く の前
+await typeWord('かみ');
+down('Space');
+down('Enter');
+assert(plain().endsWith('髪く'), `途中変換: ${plain().slice(-4)}`);
+globalThis.__neMove(plain().length); // 末尾へ戻す
+ok('挿入編集(移動・挿入・削除・途中変換)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
