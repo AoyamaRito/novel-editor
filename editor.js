@@ -564,24 +564,41 @@ async function llmInit() {
   updateLlmBtn();
   if (llmReady) status('審査員(ローカルLLM)が起動しました');
 }
-async function llmRerank(seq) {
-  if (!llmReady || !llmOn || tut || cands.length < 2) return;
-  // 文脈は「直前の1〜2文」だけを文境界で切って渡す(ぶつ切りより判断が安定する)
-  const sentences = text.slice(0, cursor).split(/(?<=[。！？\n])/).filter((x) => x.trim());
-  const context = sentences.slice(-2).join('').slice(-120);
-  const list = cands.slice(0, Math.min(8, cands.length));
+const ctxOf = (upto) =>
+  text.slice(0, upto).split(/(?<=[。！？\n])/).filter((x) => x.trim()).slice(-2).join('').slice(-120);
+async function llmAsk(list, context) {
   const prompt = `日本語のかな漢字変換の候補審査です。文脈の続きとして自然な候補の番号だけを、自然な順にカンマ区切りで挙げてください。不自然な候補は含めないでください。\n文脈:「${context}」\n候補:\n${list.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n番号:`;
+  const r = await fetch(LLM_URL + '/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 24 }),
+    signal: AbortSignal.timeout(8000),
+  });
+  return ((await r.json()).choices[0].message.content.match(/\d+/g) || []).map(Number);
+}
+// 先読みキャッシュ: ひらがな入力中に裏で審査しておき、Space の瞬間に同期適用する
+const specCache = new Map(); // key(読み+文脈+候補列) -> nums
+let specTimer = null;
+function specKey(yomi, context, list) { return yomi + '\x1f' + context + '\x1f' + list.join('\x1f'); }
+async function speculate() {
+  if (!llmReady || !llmOn || tut || mode !== 'NONE') return;
+  const plan = planConversion();
+  if (!plan || plan.list.length < 2) return;
+  const context = ctxOf(cursor - plan.removed.length);
+  const list = plan.list.slice(0, Math.min(8, plan.list.length));
+  const key = specKey(plan.yomi, context, list);
+  if (specCache.has(key)) return;
+  specCache.set(key, null); // 飛行中マーク(同じ問い合わせの重複防止)
   try {
-    const r = await fetch(LLM_URL + '/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 24 }),
-      signal: AbortSignal.timeout(8000),
-    });
-    const nums = ((await r.json()).choices[0].message.content.match(/\d+/g) || []).map(Number);
-    if (seq !== llmSeq || mode !== 'CAND' || candIdx !== 0) return; // ユーザが先に動いたら黙る
-    if (!nums.length) return;
-    // 並べ替え+フィルタ。ただし: 表示中の第一候補/自分の語彙(確定学習・コーパス)/ひらがな/カタカナは絶対に残す
+    const nums = await llmAsk(list, context);
+    specCache.set(key, nums);
+    if (specCache.size > 60) specCache.delete(specCache.keys().next().value);
+  } catch { specCache.delete(key); }
+}
+function judgeApply(nums, list) {
+  // 並べ替え+フィルタ。表示中の第一候補/自分の語彙/ひらがな/カタカナは絶対に残す
+  {
+    if (!nums.length) return false;
     const own = new Set([reading, hiraToKata(reading)]);
     Object.keys(userDict[reading] || {}).forEach((x) => own.add(x));
     (dict[reading] || []).forEach(([x]) => own.add(x));
@@ -593,7 +610,7 @@ async function llmRerank(seq) {
     add(cands[0]);
     for (const c of cands) if (own.has(c)) add(c);
     for (const c of cands.slice(8)) add(c); // 審査対象外(9番目以降)は据え置き
-    if (chosen.length < 1) return;
+    if (chosen.length < 1) return false;
     const removed = cands.length - chosen.length;
     if (candPaths) candPaths = chosen.map((c) => candPaths[oldIdx.get(c)]);
     const moved = cands[0] !== chosen[0];
@@ -601,7 +618,17 @@ async function llmRerank(seq) {
     cands = chosen;
     if (candIdx >= cands.length) candIdx = 0;
     status(`審査員: ${moved ? `「${chosen[0]}」を第一候補に` : '第一候補を支持'}${removed > 0 ? `・不自然${removed}件を除外` : ''}`);
-    render();
+    return true;
+  }
+}
+async function llmRerank(seq) {
+  if (!llmReady || !llmOn || tut || cands.length < 2) return;
+  const context = ctxOf(cursor);
+  const list = cands.slice(0, Math.min(8, cands.length));
+  try {
+    const nums = await llmAsk(list, context);
+    if (seq !== llmSeq || mode !== 'CAND' || candIdx !== 0) return; // ユーザが先に動いたら黙る
+    if (judgeApply(nums, list)) render();
   } catch {}
 }
 // ---- 自動辞書登録: LLMが確定済み原稿から固有名詞を採取し、2回観察で autoDict に登録 ----
@@ -719,79 +746,80 @@ function latticeBest(run, K = 8) {
   }
   return dp[n] || [];
 }
-function henkan() {
-  if (mode === 'CAND') { snd.cycle(); candIdx = (candIdx + 1) % cands.length; render(); return; }
-  if (mode !== 'NONE') return;
+// 変換計画(純関数: 状態を変更しない)。henkan と先読み speculation が共用する
+function planConversion() {
+  if (mode !== 'NONE') return null;
   const src = tut ? tut.buf : text;
   const upto = tut ? src.length : cursor;
-  // ……は記号変換の入口: ――(棒線)や括弧ペア(カーソルが中に来る)へ。――からは逆方向も
   const tail2 = src.slice(upto - 2, upto);
   if (!tut && (tail2 === '……' || tail2 === '――')) {
     const others = tail2 === '……' ? ['――', '「」', '『』', '（）'] : ['……', '「」', '『』', '（）'];
-    text = text.slice(0, cursor - 2) + text.slice(cursor);
-    cursor -= 2;
-    committedTo = Math.min(committedTo, cursor);
-    reading = tail2;
-    convRestore = tail2;
-    cands = [...others, tail2]; candPaths = null; candIdx = 0; mode = 'CAND';
-    render();
-    return;
+    return { kind: 'sym', yomi: tail2, removed: tail2, list: [...others, tail2], paths: null, symSkip: 0 };
   }
-  let m = (tut ? src : src.slice(committedTo, cursor)).match(/[ぁ-んー]+$/); // 未確定領域だけが変換対象
+  let m = (tut ? src : src.slice(committedTo, cursor)).match(/[ぁ-んー]+$/);
+  let symSkip = 0;
   if (!m && !tut) {
     // 句読点の後からでも直前のかな列を変換できるように、記号列を透かす(IMEの手癖)
     const m2 = text.slice(0, cursor).match(/([ぁ-んー]+)([。、！？…―」』）]{1,6})$/);
-    if (m2) {
-      symJump = m2[2].length;
-      cursor -= symJump;
-      committedTo = Math.min(committedTo, cursor);
-      m = [m2[1]];
-    }
+    if (m2) { symSkip = m2[2].length; m = [m2[1]]; }
   }
-  if (!m) return;
+  if (!m) return null;
   const run = m[0];
   let exact = null;
   for (let len = run.length; len >= 1; len--) {
     const y = run.slice(run.length - len);
     if (hasCands(y)) { exact = y; break; }
   }
-  const pred = predict();
-  const begin = (yomi, removed, list, paths) => {
-    if (tut) tut.buf = src.slice(0, src.length - removed.length);
-    else {
-      text = text.slice(0, cursor - removed.length) + text.slice(cursor);
-      cursor -= removed.length;
-    }
-    reading = yomi;
-    convRestore = removed;
-    cands = list; candPaths = paths; candIdx = 0; mode = 'CAND';
-    logEvt('conv', { y: yomi, c0: list[0] });
-    render();
-    llmSeq++;
-    llmRerank(llmSeq); // 裏で審査員に聞く(候補拘束・非同期・落ちてても無害)
-  };
-  // 予測が「打った文字より長い読み」を持っているなら予測込み単語変換
-  if (pred && (!exact || pred.S.length > exact.length)) {
-    begin(pred.reading, pred.S, lookup(pred.reading), null);
-    return;
-  }
-  // 未確定全体が一語として辞書にあるなら、従来の深い候補循環
-  if (exact === run) {
-    begin(run, run, lookup(run), null);
-    return;
-  }
-  // それ以外はラティス(複数語の同時変換)
+  const pred = symSkip ? null : predict();
+  if (pred && (!exact || pred.S.length > exact.length))
+    return { kind: 'word', yomi: pred.reading, removed: pred.S, list: lookup(pred.reading), paths: null, symSkip };
+  if (exact === run)
+    return { kind: 'word', yomi: run, removed: run, list: lookup(run), paths: null, symSkip };
   const paths = latticeBest(run, 8).filter((p) => p.segs.some(([y, s2]) => y !== s2));
   if (!paths.length) {
-    if (exact) { begin(exact, exact, lookup(exact), null); return; } // 末尾一語だけでも変換
-    snd.err(); status(`「${run}」に候補なし`); return;
+    if (exact) return { kind: 'word', yomi: exact, removed: exact, list: lookup(exact), paths: null, symSkip };
+    return { kind: 'none', run };
   }
   const list = paths.map((p) => p.out);
   const pathArr = paths.slice();
   if (!list.includes(run)) { list.push(run); pathArr.push(null); }
   const kata = hiraToKata(run);
   if (!list.includes(kata)) { list.push(kata); pathArr.push(null); }
-  begin(run, run, list, pathArr);
+  return { kind: 'word', yomi: run, removed: run, list, paths: pathArr, symSkip };
+}
+function henkan() {
+  if (mode === 'CAND') { snd.cycle(); candIdx = (candIdx + 1) % cands.length; render(); return; }
+  const plan = planConversion();
+  if (!plan) return;
+  if (plan.kind === 'none') { snd.err(); status(`「${plan.run}」に候補なし`); return; }
+  if (plan.symSkip) { // 句読点透かし: 確定後に記号の後ろへ復帰
+    symJump = plan.symSkip;
+    cursor -= plan.symSkip;
+    committedTo = Math.min(committedTo, cursor);
+  }
+  if (tut) {
+    tut.buf = tut.buf.slice(0, tut.buf.length - plan.removed.length);
+  } else {
+    text = text.slice(0, cursor - plan.removed.length) + text.slice(cursor);
+    cursor -= plan.removed.length;
+    committedTo = Math.min(committedTo, cursor);
+  }
+  reading = plan.yomi;
+  convRestore = plan.removed;
+  cands = plan.list; candPaths = plan.paths; candIdx = 0; mode = 'CAND';
+  logEvt('conv', { y: plan.yomi, c0: cands[0] });
+  // 先読みキャッシュが当たっていれば同期適用(Space の瞬間に審査済み)
+  let applied = false;
+  if (!tut && llmReady && llmOn && plan.kind === 'word' && cands.length > 1) {
+    const list8 = cands.slice(0, Math.min(8, cands.length));
+    const nums = specCache.get(specKey(plan.yomi, ctxOf(cursor), list8));
+    if (Array.isArray(nums)) applied = judgeApply(nums, list8);
+  }
+  render();
+  if (!applied && plan.kind === 'word') {
+    llmSeq++;
+    llmRerank(llmSeq); // 先読みが無ければ従来の非同期審査
+  }
 }
 function confirmCand() {
   if (mode !== 'CAND') return;
@@ -859,6 +887,10 @@ function emit(ch) {
       else if (closers.length && closers[closers.length - 1] === ch) closers.pop(); // 閉じは予約を消化
     }
     out(ch);
+  }
+  if (!tut && mode === 'NONE') { // ひらがな入力中に裏で審査(先読み)
+    clearTimeout(specTimer);
+    specTimer = setTimeout(speculate, 180);
   }
   render();
 }

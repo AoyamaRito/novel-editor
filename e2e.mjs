@@ -690,5 +690,23 @@ ok('証明書: 前方切り詰め検出(アンカー照合)');
 }
 ok('監査4R(import非破壊・curDocId・boot固定)');
 
+// ---- 43. 先読み審査: Spaceの瞬間に審査済み ----
+{
+  down('Enter'); down('Enter');
+  llmStub.reply = '2'; llmStub.delay = 10;
+  await typeWord('かみ');
+  const callsBefore = llmStub.calls;
+  await wait(260); // 先読み(180ms debounce+応答)を待つ
+  assert(llmStub.calls > callsBefore, 'ひらがな入力中に先読み審査が走る');
+  const callsAfterSpec = llmStub.calls;
+  down('Space');
+  const inst = html().match(/class="cand">▼([^<]*)</)?.[1];
+  assert(inst === '神', `Spaceの瞬間に審査済みの第一候補: ${inst}`);
+  assert(llmStub.calls === callsAfterSpec, 'キャッシュ命中なので追加の問い合わせなし');
+  down('AltLeft');
+  llmStub.reply = '1';
+}
+ok('先読み審査(入力中に審査→Space即適用)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
