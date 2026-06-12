@@ -460,7 +460,13 @@ async function toWav16k(arrayBuf) {
   new Int16Array(buf, 44).set(pcm);
   return buf;
 }
+let sttPairs = JSON.parse(localStorage.getItem('ne:sttPairs') || '[]'); // 過去の(raw→かな)補正例
 function voiceInsert(t, sha, extra) {
+  if (extra?.raw && extra?.kana) { // 自己改善: 過去の書き起こし補正を次回の例示に使う
+    sttPairs.push([extra.raw, extra.kana]);
+    if (sttPairs.length > 20) sttPairs.shift();
+    localStorage.setItem('ne:sttPairs', JSON.stringify(sttPairs));
+  }
   if (mode === 'CAND') confirmCand();
   snap(true);
   logEvt('stt', { sha, s: t, ...(extra || {}) }); // 最終文+raw/かな の三層を記録(監査可能)
@@ -486,7 +492,7 @@ async function voicePipeline(raw, sha) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: `次の文を、句読点・記号はそのままに、すべてひらがなに直してください。説明不要、結果のみ。\n文:「${raw}」\n結果:` }],
+        messages: [{ role: 'user', content: `次の文を、句読点・記号はそのままに、すべてひらがなに直してください。説明不要、結果のみ。${sttPairs.slice(-3).map(([r2, k2]) => `\n例:「${r2}」→「${k2}」`).join('')}\n文:「${raw}」\n結果:` }],
         temperature: 0, max_tokens: 400,
       }),
       signal: AbortSignal.timeout(30000),
@@ -500,13 +506,28 @@ async function voicePipeline(raw, sha) {
   }
   if (!kana) { voiceInsert(raw, sha, { raw }); return; } // フォールバック: whisper出力をそのまま
   // 文節ごとに自前ラティスで表記を決める(自分の辞書・固有名詞・開き癖が効く)
-  const parts = kana.split(/([。、！？…―]+)/);
+  // 未知のカタカナ固有名詞はラティスに入る前に保護(切り刻み防止)。原文の表記のまま温存する
+  const prot = [];
+  for (const K of new Set(raw.match(/[ァ-ヶー]{2,}/g) || [])) {
+    const hira = kataToHira(K);
+    if (/^[ぁ-んー]+$/.test(hira) && !baseDict[hira] && !dict[hira] && !userDict[hira] && !autoDict[hira] && !FUNC.has(hira))
+      prot.push({ K, hira });
+  }
+  let work = kana;
+  prot.forEach((p3, i) => { work = work.split(p3.hira).join(`\uE000${i}\uE001`); });
+  const parts = work.split(/([。、！？…―]+)/);
   let outText = '';
   for (const p2 of parts) {
     if (!p2) continue;
-    if (!/^[ぁ-んー]+$/.test(p2)) { outText += p2; continue; }
-    const best = latticeBest(p2, 1)[0];
-    outText += best ? best.out : p2;
+    const bits = p2.split(/\uE000(\d+)\uE001/);
+    for (let bi = 0; bi < bits.length; bi++) {
+      if (bi % 2 === 1) { outText += prot[Number(bits[bi])].K; continue; }
+      const b2 = bits[bi];
+      if (!b2) continue;
+      if (!/^[ぁ-んー]+$/.test(b2)) { outText += b2; continue; }
+      const best = latticeBest(b2, 1)[0];
+      outText += best ? best.out : b2;
+    }
   }
   voiceInsert(outText, sha, { raw, kana });
 }
@@ -548,7 +569,7 @@ async function populateMics() {
       .join('');
   } catch {}
 }
-async function micToggle() {
+async function micToggle(viaPtt) {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) { status('マイク非対応環境です'); return; }
   if (rec) { rec.stop(); return; }
   try {
@@ -558,18 +579,22 @@ async function micToggle() {
     });
     recChunks = []; recStart = Date.now();
     rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    rec._ptt = !!viaPtt;
+    rec._cancel = false;
     rec.ondataavailable = (e) => recChunks.push(e.data);
     rec.onstop = async () => {
       stream.getTracks().forEach((tr) => tr.stop());
+      const wasPtt = rec?._ptt, canceled = rec?._cancel;
       const blob = new Blob(recChunks, { type: 'audio/webm' });
       const dur = Date.now() - recStart;
       rec = null; updateMicBtn();
+      if (canceled || (wasPtt && dur < 300)) { status('録音を破棄しました'); return; } // ショートカット誤爆/短すぎ
       await handleVoice(blob, dur);
     };
     rec.start();
     updateMicBtn();
     const dev = stream.getAudioTracks()[0]?.label || '不明なデバイス';
-    status(`録音中(${dev})…(🎤で停止→書き起こし)`);
+    status(viaPtt ? `録音中(${dev})…(左Cmdを離すと書き起こし)` : `録音中(${dev})…(🎤で停止→書き起こし)`);
   } catch { status('マイクの使用が許可されませんでした'); }
 }
 
@@ -1309,6 +1334,8 @@ function tutHint() {
 // ---- キーイベント(配列デコード。シフト面=Shiftキー、判定窓なし) ----
 function onKeydown(e) {
   const code = e.code;
+  if (code === 'MetaLeft' && !e.repeat && !rec && !tut) { micToggle(true); return; } // 左Cmd長押し=プッシュトゥトーク
+  if (rec && rec._ptt && code !== 'MetaLeft') rec._cancel = true; // 他キーが来た=ショートカットだった→破棄
   if (!e.repeat || code === 'Backspace')
     logEvt('k', { c: code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h', ...(e.repeat ? { r: 1 } : {}) });
   document.querySelectorAll(`[data-code="${code}"]`).forEach((k) => k.classList.add('hit'));
@@ -1425,6 +1452,7 @@ function onKeydown(e) {
   }
 }
 function onKeyup(e) {
+  if (e.code === 'MetaLeft' && rec && rec._ptt) rec.stop(); // 左Cmdを離す→書き起こしへ
   document.querySelectorAll(`[data-code="${e.code}"]`).forEach((k) => k.classList.remove('hit'));
 }
 

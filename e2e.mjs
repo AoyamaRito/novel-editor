@@ -788,14 +788,21 @@ ok('音声パイプライン(whisper→かな化→ラティス)');
 }
 ok('辞書棚卸し(LLM・userDictは不可侵)');
 
-// ---- 49. 音声: カタカナ書き起こしの正規化 ----
+// ---- 49. 音声: 正規化と表記の主権(自分のコーパスが勝つ) ----
 {
   down('Enter');
   llmStub.kanaReply = 'コンニチハ'; // LLMまでカタカナで返した最悪ケース
   await globalThis.__neVoicePipe('コンニチハ', globalThis.__neSha('v3'));
-  assert(/こんにちは|今日は/.test(plain().slice(-8)), `カタカナが正規化されて変換に乗る: ${plain().slice(-8)}`);
+  const st49 = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'stt').pop();
+  assert(st49.kana === 'こんにちは', `かな化層は正規化される: ${st49.kana}`);
+  assert(st49.s === 'コンニチハ', `最終表記は自分のコーパスに忠実(過去作にコンニチハが実在): ${st49.s}`);
+  // 未登録のカタカナ固有名詞は原文のまま生き残る
+  down('Enter');
+  llmStub.kanaReply = 'ぞまほんがきた。';
+  await globalThis.__neVoicePipe('ゾマホンガ来タ。', globalThis.__neSha('v4'));
+  assert(plain().includes('ゾマホン'), `未登録カタカナ名の復元: ${plain().slice(-10)}`);
 }
-ok('音声カタカナ正規化');
+ok('音声: かな正規化+表記主権+固有名詞復元');
 
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
