@@ -73,3 +73,6 @@ node e2e.mjs   # 偽DOM+偽llama-server上で keydown列→描画を検証
 - `layout.json` の slot 名 `+SP` は旧 space和音設計の名残で、現在は「シフト面」を意味する
 - 原稿は yume-lite Block(履歴32版)+ `書類/novel-editor/manuscript.txt` に自動保存
 - ログ: ne:userDict(確定学習)/ ne:autoDict・ne:observed(自動登録)/ ne:graph(原稿履歴)
+- 著者証明: log.jsonl は SHA-256 ハッシュチェーン(paste/import/移動も全記録)、原稿状態の sha256 を保存毎にチェーンへ固定。
+  anchors.jsonl は OpenTimestamps カレンダーの **pending 証明**(標準 .ots 形式での第三者検証導線は未整備=次フェーズ)。
+  「カレンダー応答を当日中に取得した」ことの記録であり、Bitcoin ブロックへの確定検証はまだ主張しない

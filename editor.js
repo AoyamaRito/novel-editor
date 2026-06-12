@@ -80,6 +80,7 @@ async function save() {
     } catch (e) { where = 'localStorage(ディスク保存失敗)'; }
   }
   status(`保存 (${r.action}) — 履歴 ${manuscript.totalHistory} 版 → ${where}`);
+  logEvt('state', { sha: sha256hex(text), len: text.length }); // 原稿状態の時系列をチェーンに固定(リプレイ非依存の証明)
   llmHarvest(); // 保存のついでに原稿から固有名詞を採取
 }
 
@@ -119,6 +120,7 @@ function moveCursor(p) {
   committedTo = cursor;
   cursor = Math.max(0, Math.min(text.length, p));
   committedTo = cursor;
+  logEvt('mv', { to: cursor });
   render();
 }
 globalThis.__neMove = moveCursor; // e2e 用
@@ -127,24 +129,65 @@ globalThis.__neMove = moveCursor; // e2e 用
 // 用途: 配列の実測再最適化(キー間遷移時間)・弱点ドリル・審査員の採用率・速度曲線
 let logBuf = [];
 let logHash = localStorage.getItem('ne:logHash') || '0';
-function fnv(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+// SHA-256(チェーン用)。Electron では node crypto、無ければ同期純JS実装(e2e で node:crypto と一致検証済み)
+const nodeCrypto = typeof window !== 'undefined' && window.require ? window.require('crypto') : null;
+const SHA_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+function sha256hex(str) {
+  if (nodeCrypto) return nodeCrypto.createHash('sha256').update(str).digest('hex');
+  const bytes = new TextEncoder().encode(str);
+  const bitLen = bytes.length * 8;
+  const padded = new Uint8Array((((bytes.length + 8) >> 6) + 1) << 6);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+  const dv = new DataView(padded.buffer);
+  dv.setUint32(padded.length - 8, Math.floor(bitLen / 0x100000000));
+  dv.setUint32(padded.length - 4, bitLen >>> 0);
+  const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const w = new Uint32Array(64);
+  const rr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < padded.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rr(w[i - 15], 7) ^ rr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+      const s1 = rr(w[i - 2], 17) ^ rr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e2, f, g, h] = H;
+    for (let i = 0; i < 64; i++) {
+      const S1 = rr(e2, 6) ^ rr(e2, 11) ^ rr(e2, 25);
+      const ch = (e2 & f) ^ (~e2 & g);
+      const t1 = (h + S1 + ch + SHA_K[i] + w[i]) >>> 0;
+      const S0 = rr(a, 2) ^ rr(a, 13) ^ rr(a, 22);
+      const mj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + mj) >>> 0;
+      h = g; g = f; f = e2; e2 = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e2) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
   }
-  return h.toString(16).padStart(8, '0');
+  return H.map((x) => x.toString(16).padStart(8, '0')).join('');
 }
+globalThis.__neSha = sha256hex; // e2e 用(node:crypto との一致検証)
 function logEvt(type, data) {
-  // 各行が前行のハッシュを含む append-only チェーン。
+  // 各行が前行のハッシュを含む append-only チェーン(SHA-256)。
   // 決定的エンジン+このログ=原稿を打鍵から再導出できる=「人が書いた」検証可能な証拠
   const body = JSON.stringify({ t: Date.now(), e: type, ...data, p: logHash });
-  logHash = fnv(logHash + body);
+  logHash = sha256hex(logHash + body);
   localStorage.setItem('ne:logHash', logHash);
   logBuf.push(body);
   if (logBuf.length >= 500) flushLog();
 }
 globalThis.__neLogLast = () => logBuf[logBuf.length - 1]; // e2e 用
+globalThis.__neLogAll = () => logBuf.slice();
 
 // 公証: 1日1回、打鍵チェーンの現在ハッシュを OpenTimestamps に刻む(「人が書いた」の外部証明)
 async function anchorNow(force) {
@@ -166,6 +209,7 @@ function flushLog() {
   const chunk = logBuf.join('\n') + '\n';
   logBuf = [];
   ipc.invoke('append-file', { name: 'log.jsonl', content: chunk }).catch(() => {});
+  ipc.invoke('save-file', { name: 'chainhead.txt', content: logHash }).catch(() => {}); // localStorage 消失への保険
 }
 globalThis.__neLogSize = () => logBuf.length; // e2e 用
 
@@ -205,6 +249,7 @@ function importBundle(json) {
   localStorage.setItem('ne:lastScanLen', String(lastScanLen));
   for (const [k, v] of Object.entries(b.settings || {})) localStorage.setItem('ne:' + (k === 'tutStage' ? 'tutStage' : k), v);
   rebuildSelfPred();
+  logEvt('import', { bsha: sha256hex(json), sha: sha256hex(text), len: text.length }); // 復元も記録
   render();
 }
 globalThis.__neExport = exportBundle; // e2e 用
@@ -216,6 +261,7 @@ function pasteText(raw) {
   if (tut || !raw) return;
   const t = raw.replace(/\r\n?/g, '\n'); // 改行コード正規化。作法エンジンは通さず原文のまま挿入
   if (mode === 'CAND') confirmCand();
+  logEvt('paste', { at: cursor, s: t }); // 外部由来テキストは全文を記録(証明力の根幹)
   text = text.slice(0, cursor) + t + text.slice(cursor);
   cursor += t.length;
   committedTo = cursor;
@@ -842,7 +888,7 @@ function onKeydown(e) {
     e.preventDefault();
     if (!tut && mode === 'NONE') {
       const pr = predict();
-      if (pr) { out(pr.ghost); render(); }
+      if (pr) { logEvt('tab', { g: pr.ghost }); out(pr.ghost); render(); }
     }
     return;
   }
@@ -1119,6 +1165,17 @@ async function main() {
     }
   }
   initStore();
+  // チェーン先頭の復元(localStorage 消失への保険)と FNV→SHA-256 移行
+  if (ipc && logHash === '0') {
+    try {
+      const h = await ipc.invoke('read-file', { name: 'chainhead.txt' });
+      if (h && /^[0-9a-f]{8,64}$/.test(h.trim())) {
+        logHash = h.trim();
+        localStorage.setItem('ne:logHash', logHash);
+      }
+    } catch {}
+  }
+  if (logHash !== '0' && logHash.length < 64) logEvt('rehash', { old: logHash }); // 旧FNVチェーンを新チェーンに巻き込む
   buildCharts(layout);
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('keyup', onKeyup);
@@ -1131,7 +1188,7 @@ async function main() {
     if (!window.confirm('カーソルをここに移動して書きますか?')) return;
     moveCursor(p);
     const midLine = cursor > 0 && text[cursor - 1] !== '\n' && cursor < text.length && text[cursor] !== '\n';
-    if (midLine && window.confirm('改行を入れてから書きますか?')) out('\n');
+    if (midLine && window.confirm('改行を入れてから書きますか?')) { logEvt('ins', { s: '\\n' }); out('\n'); }
     render();
   });
   // システムIMEがONだと打鍵がOSに横取りされる → 検知して警告

@@ -36,6 +36,11 @@ ipcMain.handle('append-file', (e, { name, content }) => {
   return p;
 });
 
+ipcMain.handle('read-file', (e, { name }) => {
+  const p = path.join(app.getPath('documents'), 'novel-editor', name);
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
+});
+
 // 保存ダイアログ付きエクスポート(どこに出たか分かるように)
 ipcMain.handle('export-dialog', async (e, { defaultName, content }) => {
   const win = BrowserWindow.getFocusedWindow();

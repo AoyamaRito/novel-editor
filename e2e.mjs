@@ -528,6 +528,25 @@ globalThis.__neImport(bundle);
 assert(plain() === before33, `復元で原稿が巻き戻る: ${JSON.stringify(plain().slice(-6))}`);
 ok('バックアップJSONの書き出し/復元');
 
+// ---- 33b. 監査強化: SHA-256チェーン / paste・mv・state の記録 ----
+const nodeCryptoTest = await import('crypto');
+for (const v of ['abc', 'こんにちは……「テスト」', '']) {
+  const want = nodeCryptoTest.createHash('sha256').update(v).digest('hex');
+  assert(globalThis.__neSha(v) === want, `純JS SHA-256 が node:crypto と一致: ${v.slice(0, 8)}`);
+}
+globalThis.__nePaste('外部テキスト');
+let last33 = JSON.parse(globalThis.__neLogLast());
+assert(last33.e === 'paste' && last33.s === '外部テキスト', 'paste は全文がログに乗る');
+assert(last33.p.length === 64, 'チェーンは SHA-256(64hex)');
+globalThis.__neMove(0);
+last33 = JSON.parse(globalThis.__neLogLast());
+assert(last33.e === 'mv' && last33.to === 0, 'カーソル移動が記録される');
+globalThis.__neMove(plain().length);
+el('save').onclick();
+await wait(30);
+assert(globalThis.__neLogAll().some((l) => JSON.parse(l).e === 'state'), 'saveで原稿状態(sha256)がチェーンに固定される');
+ok('監査強化(SHA-256一致・paste/mv/state記録)');
+
 // ---- 34. 公証(OpenTimestamps)の安全動作 ----
 await globalThis.__neAnchor(true); // ipc 無し環境では静かにスキップ(例外を出さない)
 assert(true, 'anchorNow はブラウザ/テスト環境で安全');
