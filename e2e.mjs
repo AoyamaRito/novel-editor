@@ -107,7 +107,7 @@ async function typeWord(s) { for (const c of s) await type(c); }
 const html = () => el('text').innerHTML;
 const plain = () =>
   html()
-    .replace(/<span class="(ghost|candinfo|closers)">[^<]*<\/span>/g, '') // 予測・候補カウンタ・予約閉じは本文ではない
+    .replace(/<span class="(ghost|candinfo|closers|nl)">[^<]*<\/span>/g, '') // 予測・候補カウンタ・予約閉じ・改行マークは本文ではない
     .replace(/<[^>]*>/g, '');
 
 let n = 0;
@@ -478,6 +478,15 @@ down('Enter');
 assert(plain().endsWith('髪く'), `途中変換: ${plain().slice(-4)}`);
 globalThis.__neMove(plain().length); // 末尾へ戻す
 ok('挿入編集(移動・挿入・削除・途中変換)');
+
+// ---- 29. 改行マーク+カーソル行強調 ----
+assert(html().includes('class="nl"'), '改行マーク⏎が表示される');
+assert(html().includes('id="curline"'), '横書きのカーソル行帯がある');
+el('tate').onclick();
+assert(html().includes('cur-line'), '縦書きのカーソル行が強調される');
+assert(html().includes('class="nl"'), '縦書きでも改行マークが出る');
+el('tate').onclick();
+ok('改行マーク+カーソル行強調');
 
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

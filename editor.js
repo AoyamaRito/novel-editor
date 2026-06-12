@@ -129,7 +129,7 @@ function clickOffset(ev) {
   if (typeof document.caretRangeFromPoint !== 'function') return null;
   const r = document.caretRangeFromPoint(ev.clientX, ev.clientY);
   if (!r) return null;
-  const SKIP = new Set(['ghost', 'closers', 'candinfo', 'cand', 'caret']);
+  const SKIP = new Set(['ghost', 'closers', 'candinfo', 'cand', 'caret', 'nl']);
   let off = 0, found = false;
   const walk = (node) => {
     if (found) return;
@@ -771,7 +771,10 @@ function layoutLines(tokens) {
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t.caret) { cur.push(t); continue; }
-    if (t.c === '\n') { lines.push(cur); cur = []; count = 0; continue; }
+    if (t.c === '\n') {
+      cur.push({ c: '⏎', cls: 'nl', i: t.i }); // 改行マーク(字数には数えない)
+      lines.push(cur); cur = []; count = 0; continue;
+    }
     cur.push(t); count++;
     if (count >= LINE_LEN) {
       let j = i + 1;
@@ -797,6 +800,7 @@ globalThis.__neLayout = layoutLines; // e2e 用
 
 // ---- 描画 ----
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const escNL = (s) => esc(s).replace(/\n/g, '<span class="nl">⏎</span>\n'); // 改行マーク表示
 function composingHtml() {
   if (mode === 'CAND')
     return `<span class="cand">▼${esc(cands[candIdx])}</span><span class="candinfo">(${candIdx + 1}/${cands.length})</span>`;
@@ -817,12 +821,12 @@ function render() {
   if (lastConv && Date.now() < lastConv.until && head.length >= lastConv.pos + lastConv.len) {
     const { pos, len } = lastConv;
     body =
-      esc(head.slice(0, pos)) +
+      escNL(head.slice(0, pos)) +
       `<span class="conv-flash">${esc(head.slice(pos, pos + len))}</span>` +
-      esc(head.slice(pos + len));
+      escNL(head.slice(pos + len));
   } else {
     lastConv = null;
-    body = esc(head);
+    body = escNL(head);
   }
   if (pendStart < cursor) body += `<span class="pend">${esc(text.slice(pendStart, cursor))}</span>`;
   const pr = predict(); // 予測ゴースト(薄青)
@@ -830,11 +834,15 @@ function render() {
     body + composingHtml() + '<span class="caret"></span>' +
     (pr ? `<span class="ghost">${esc(pr.ghost)}</span>` : '') +
     (closers.length ? `<span class="closers">${esc(closers.slice().reverse().join(''))}</span>` : '') +
-    esc(text.slice(cursor));
-  // タイプライタースクロール: 入力中の行を常に画面の縦中央へ
+    escNL(text.slice(cursor)) +
+    '<div id="curline"></div>';
+  // タイプライタースクロール: 入力中の行を常に画面の縦中央へ + カーソル行の帯
   const caretEl = el.querySelector('.caret');
-  if (caretEl && typeof caretEl.offsetTop === 'number')
+  if (caretEl && typeof caretEl.offsetTop === 'number') {
     el.scrollTop = Math.max(0, caretEl.offsetTop - el.clientHeight * 0.5);
+    const cl = el.querySelector('#curline');
+    if (cl) cl.style.top = caretEl.offsetTop - 6 + 'px';
+  }
   document.getElementById('mode').textContent =
     mode === 'NONE' ? '─' : '▼';
   document.getElementById('count').textContent = `${text.length}字`;
@@ -867,7 +875,7 @@ function renderTate(el) {
   totalSpreads = Math.max(1, Math.ceil(pages.length / 2));
   const si = viewSpread < 0 ? totalSpreads - 1 : Math.min(viewSpread, totalSpreads - 1);
   const lineHtml = (ln) =>
-    '<div class="vl">' +
+    `<div class="vl${ln.some((t) => t.caret) ? ' cur-line' : ''}">` +
     ln.map((t) =>
       t.caret ? '<span class="caret"></span>'
       : `<span${t.i != null ? ` data-i="${t.i}"` : ''}${t.cls ? ` class="${t.cls}"` : ''}>${esc(t.c)}</span>`

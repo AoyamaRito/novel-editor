@@ -20,6 +20,9 @@
   .pend { color: #1e56c8; border-bottom: 1px dotted #1e56c8; }
   .ghost { color: #a9c4ef; }
   .closers { color: #b0a698; }
+  .nl { color: #cdc5b4; font-size: 11px; user-select: none; }
+  #curline { position: absolute; left: 0; right: 0; height: 2.1em; background: rgba(47,111,79,.07); pointer-events: none; z-index: 0; }
+  .vl.cur-line { background: rgba(47,111,79,.09); border-right: 2.5px solid rgba(47,111,79,.5); margin-right: -1.5px; }
   .candinfo { font-size: 11px; color: #999; font-family: sans-serif; }
   .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: text-bottom; animation: blink 1s step-start infinite; }
   @keyframes blink { 50% { opacity: 0; } }
