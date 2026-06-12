@@ -34,9 +34,9 @@ let dict = {}, baseDict = {}, drills = { convWords: [], lines: [] };
 let userDict = JSON.parse(localStorage.getItem('ne:userDict') || '{}');
 let autoDict = JSON.parse(localStorage.getItem('ne:autoDict') || '{}'); // LLM採取の自動登録(読み→{表記:回数})
 let observed = JSON.parse(localStorage.getItem('ne:observed') || '{}'); // 採取観察カウント(2回で登録)
-let lastScanLen = 0;
+let lastScanLen = Number(localStorage.getItem('ne:lastScanLen') || 0);
 let text = '';
-let mode = 'NONE'; // NONE | MARK(▽) | CAND(▼)
+let mode = 'NONE'; // NONE | CAND(▼)
 let reading = '', cands = [], candIdx = 0;
 let graph, manuscript;
 let tut = null; // 練習モード状態
@@ -213,8 +213,10 @@ async function llmHarvest() {
   if (!llmReady || !llmOn || tut) return;
   const committed = text.slice(0, committedTo);
   if (committed.length - lastScanLen < 60) return; // 新しく書けた分が貯まってから
+  if (lastScanLen > committed.length) lastScanLen = committed.length; // 原稿が縮んだ場合の防御
   const chunk = committed.slice(Math.max(0, lastScanLen - 40)).slice(-500);
   lastScanLen = committed.length;
+  localStorage.setItem('ne:lastScanLen', String(lastScanLen));
   const prompt = `以下の小説本文から固有名詞(人名・地名・組織名・技名など)と珍しい語だけを抜き出し、1行に「表記,読み(ひらがな)」の形式で列挙してください。説明や一般語は不要です。\n本文:「${chunk}」`;
   try {
     const r = await fetch(LLM_URL + '/v1/chat/completions', {
@@ -421,18 +423,14 @@ function emit(ch) {
   if (tut && tut.type === 'kana') { tutEmit(ch); return; }
   if (mode === 'CAND') confirmCand();
   if (ch === '゛') {
-    if (mode === 'MARK') {
-      const last = reading.slice(-1);
-      if (CYCLE[last]) reading = reading.slice(0, -1) + CYCLE[last];
-    } else if (tut) {
+    if (tut) {
       const last = tut.buf.slice(-1);
       if (CYCLE[last]) { tut.buf = tut.buf.slice(0, -1) + CYCLE[last]; tutCheck(); }
     } else {
       const last = text.slice(-1);
       if (CYCLE[last]) text = text.slice(0, -1) + CYCLE[last];
     }
-  } else if (mode === 'MARK') reading += ch;
-  else {
+  } else {
     if (!tut) {
       if (PAIR[ch]) closers.push(PAIR[ch]); // 開き→閉じを予約
       else if (closers.length && closers[closers.length - 1] === ch) closers.pop(); // 閉じは予約を消化
@@ -457,7 +455,7 @@ const STAGES = [
   { name: '単打面ぜんぶ', type: 'kana' },
   { name: 'シフト面(Shift+キー)', type: 'kana' },
   { name: '゛変形(濁音・半濁・小書き)', type: 'kana' },
-  { name: '変換(かなキー)', type: 'conv' },
+  { name: '変換(Space)', type: 'conv' },
   { name: '実文(自分の小説・変換込み)', type: 'conv' },
 ];
 const ITEMS_PER_STAGE = 10;
@@ -580,9 +578,7 @@ function tutCheck() {
 }
 function tutBackspace() {
   if (tut.type === 'conv') {
-    if (mode === 'CAND') { mode = 'MARK'; }
-    else if (mode === 'MARK') { if (reading) reading = reading.slice(0, -1); else mode = 'NONE'; }
-    else tut.buf = tut.buf.slice(0, -1);
+    tut.buf = tut.buf.slice(0, -1); // CAND中のBackspaceは backspace() 側で cancel 済み
   } else { tut.pi = Math.max(0, tut.pi - 1); tut.buf = tut.path[tut.pi]; }
   render();
 }
@@ -594,7 +590,7 @@ function flash() {
 // 次に押すキーのヒント
 function tutHint() {
   if (tut.type === 'conv')
-    return { label: `よみ「${tut.yomi}」を打つ → かな/右Cmd=変換・候補送り → Enter で決定`, code: null, chord: false };
+    return { label: `よみ「${tut.yomi}」を打つ → Space=変換・候補送り → Enter で決定`, code: null, chord: false };
   const next = tut.path[tut.pi + 1];
   if (next === undefined) return null;
   if (next.length === tut.buf.length)
@@ -700,7 +696,6 @@ function onKeyup(e) {
 // ---- 描画 ----
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 function composingHtml() {
-  if (mode === 'MARK') return `<span class="mark">▽${esc(reading)}</span>`;
   if (mode === 'CAND')
     return `<span class="cand">▼${esc(cands[candIdx])}</span><span class="candinfo">(${candIdx + 1}/${cands.length})</span>`;
   return '';
@@ -733,7 +728,7 @@ function render() {
     (closers.length ? `<span class="closers">${esc(closers.slice().reverse().join(''))}</span>` : '');
   el.scrollTop = el.scrollHeight;
   document.getElementById('mode').textContent =
-    mode === 'NONE' ? '─' : mode === 'MARK' ? '▽' : '▼';
+    mode === 'NONE' ? '─' : '▼';
   document.getElementById('count').textContent = `${text.length}字`;
 }
 function renderTut(el) {
@@ -782,7 +777,7 @@ function renderTut(el) {
       <div class="hintline">${hint ? '次: ' + esc(hint.label) : ''}</div>
       <div class="stats">ミス ${tut.errors} ・ ${mins > 0.05 ? (tut.hits / mins).toFixed(0) : '─'} 字/分 ・ Enter=スキップ ・ Esc=終了</div>
     </div>`;
-  document.getElementById('mode').textContent = mode === 'NONE' ? '練' : mode === 'MARK' ? '▽' : '▼';
+  document.getElementById('mode').textContent = mode === 'NONE' ? '練' : '▼';
 }
 function status(msg) { document.getElementById('status').textContent = msg; }
 function statusKey(code) { document.getElementById('keycode').textContent = code; }

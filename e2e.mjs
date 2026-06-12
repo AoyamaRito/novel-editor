@@ -419,6 +419,17 @@ assert(auto1 === 'リフィア', `自動登録語が第一候補: ${auto1}`);
 down('Enter');
 ok('LLM採取→自動登録(幻覚ガード込み)');
 
+// ---- 19g. レビュー修正の検証: CAND中Backspace復元 / 採取走査位置の永続化 ----
+down('Enter');
+llmStub.reply = '1';
+await typeWord('かみ');
+down('Space');
+down('Backspace'); // 候補をやめてかなに戻す(MARK残骸が消えたことの確認)
+assert(plain().endsWith('かみ'), `CAND中Backspaceで打った分が戻る: ${plain().slice(-3)}`);
+assert(el('mode').textContent !== '▽', 'MARKモードは存在しない');
+assert(Number(localStorage.getItem('ne:lastScanLen') || 0) > 0, 'llmHarvestの走査位置が永続化されている');
+ok('CAND-Backspace復元+走査位置の永続化');
+
 // ---- 20. 効果音トグルの永続化 ----
 const sBefore = localStorage.getItem('ne:sound');
 el('sound').onclick();

@@ -1,7 +1,7 @@
 # novel-editor
 
 オリジナルかな配列で小説を書く専用エディタ。OS の IME を使わない。
-仕様の正典: `/Users/AoyamaRito/PJs/novel-editor/SPEC.md`
+仕様の正典: `/Users/AoyamaRito/PJs/novel-editor/SPEC.md`(決定の経緯込み)
 
 ## 起動
 
@@ -10,47 +10,66 @@ cd /Users/AoyamaRito/grok_build/novel-editor
 npm start
 ```
 
-(Electron アプリ。electron 30.5.1 = Node 18 互換版を固定。
-`main.js` の webSecurity:false は file:// 上で ES module と fetch を通すための割り切り —
-完全ローカル・リモートコンテンツゼロの前提でのみ正当)
+(Electron 30.5.1 固定 = Node 18 互換。`main.cjs` の webSecurity:false / nodeIntegration:true は
+完全ローカル・リモートコンテンツゼロの前提でのみ正当な割り切り)
 
-## 操作
+## 操作(現行・2026-06-12 確定)
 
 | キー | 動作 |
 |---|---|
 | 文字キー | 単打面のかな |
-| space + 文字キー(同時) | 和音面のかな |
+| **Shift + 文字キー** | シフト面のかな(モディファイア方式。同時打鍵の判定窓は存在しない) |
 | ゛(F) | 直前の字を変形: か→が、は→ば→ぱ、あ→ぁ(循環) |
-| かな(右親指) | 変換マーク ▽ 開始 / 変換発動 / 候補送り(末尾にひらがな無変換、循環) |
-| 英数(左親指) | ▼→読みに戻る / ▽→解除(読みは本文へ) |
-| 次のかなを打つ | 候補を暗黙確定 |
-| Enter | 確定+改行 / Backspace | 削除(▼では読みに戻る) |
-| Cmd+S / 保存ボタン | yume-lite Block にコミット(履歴つき) |
+| **Space**(7・右Cmd・かな も同じ) | 変換 / 候補送り(末尾にひらがな→カタカナ、循環) |
+| Enter | ▼決定 → 未確定かな確定+閉じカッコ実体化 → 改行(三層。決定と改行は同時に走らない) |
+| 8 / Tab / F1〜F10 | カタカナ確定 / 予測をひらがな確定 / 全角数字(F10=0) |
+| 英数 / Option / Backspace | 候補をやめて打った分だけかなに戻す |
+| Cmd+S | 保存(10秒ごと+終了時にも自動保存) |
 
-かな/英数キーが反応しないときは、画面下の `code:` 表示で実際のコード名を確認し、
-`editor.js` 冒頭の `HENKAN_CODES` / `CANCEL_CODES` に追加する。
+- 「…」キー一打で「……」。直後の Space で ――・「」・『』・（） に変換(ペアはカーソルが中)
+- 「『（ を打つと閉じが予約表示され、閉じキーか Enter で実体化
+- 作法エンジン: 地の文の行頭は自動字下げ(セリフ行はしない)、！？の後の全角アキ、「。」」の句点除去
+- 表示色: 青=未確定 / 薄青=予測ゴースト / 緑フラッシュ=いま変換した字 / 黒=確定
 
-## 練習モード(チュートリアル)
+## 変換の層(優先順位順)
 
-ヘッダの「練習」ボタン。6ステージ制、**出題は全部自分の小説コーパス**:
+1. **あなたの確定**(userDict) — 開く選択も学習される
+2. **自動登録**(autoDict) — ローカルLLMが原稿から固有名詞を採取。原稿に実在する表記のみ・2回観察で登録
+3. **自分のコーパス**(dict.json — 過去作品から生成)
+4. **基底辞書**(basedict.json 89.6万読み = mozc + IPADIC活用展開 + SKK系)
+5. ラティス(最小コスト経路)が複数語の同時変換と分割を決める
+6. **ローカルLLM審査員**(同梱 TinySwallow-1.5B)が文脈で第一候補を選び、不自然候補を除外。
+   出力は候補番号のみ=本文を一文字も生成しない。ユーザが先に動けば黙る
 
-1. ホーム段(単打) → 2. 単打面ぜんぶ → 3. 和音面(space同時) → 4. ゛変形 → 5. 変換(かなキー) → 6. 実文(自分の小説のかな化文)
+## 練習モード
 
-- 次に押すキーが配列チャート上でハイライトされる(和音は和音面側が光る)
-- ミスは弾かれて赤フラッシュ(誤字は入らない)。Enter=スキップ、Esc=終了
-- ステージ進行は localStorage に保存、字/分とミス数を計測
-- 教材の再生成: `/PJs/novel-editor/tools/build-drills.js` → `drills.json` をコピー
+6ステージ: ホーム段 → 単打面 → シフト面(Shift+キー) → ゛変形 → 変換(Space) → 実文(変換込み)。
+出題は全部自分のコーパス。次に押すキーがグロー+十字エフェクト、シフト面では逆側の⇧が点灯。
+字/分とミスを計測。Enter=スキップ、Esc=終了。
 
-## データ
+## データ生成(リポジトリに含まれない大物)
 
-- `layout.json` — 配列(導出元: `/PJs/novel-editor/tools/layout-gen.js`)。コーパスが増えたら再生成してコピー
-- `dict.json` — 自己コーパス辞書(`/PJs/novel-editor/tools/build-dict.js`)
-- 確定学習: localStorage `ne:userDict`(自分の確定が corpus 頻度より常に優先)
-- 原稿: localStorage `ne:graph`(yume-lite Graph、`novel:manuscript` Block の versions が履歴)
+```sh
+cd /Users/AoyamaRito/PJs/novel-editor   # corpus/ と data/ があるパイプライン側
+node tools/build-basedict2.js > basedict.json   # mozc/IPADIC/SKK(要 data/ 取得)
+node tools/build-dict.js > dict.json            # 自己コーパス辞書
+node tools/build-drills.js > drills.json        # 練習教材
+node tools/layout-gen.js                        # 配列改訂(anchor)。--fresh は白紙導出
+```
 
-## MVP の割り切り(SPEC からの差分)
+LLM(`llm/`、リポジトリ外): llama.cpp の llama-server(mac/win)+ TinySwallow-1.5B GGUF を配置。
+パッケージは electron-packager に `--asar.unpack="**/llm/**"` 必須。
 
-- 送り仮名マークは未実装。代わりに**読みを活用形まで全部打って変換**
-  (辞書が corpus の活用形表記を持っているので「はしった→走った」が引ける)。英数は戻る/解除専用
-- カーソルは末尾固定(追記+Backspace のみ)。挿入編集は次フェーズ
-- 同時打鍵窓 40ms 固定(`CHORD_WINDOW_MS`)。実打で調整する
+## テスト(e2e-snow-ball)
+
+```sh
+node e2e.mjs   # 偽DOM+偽llama-server上で keydown列→描画を検証
+```
+
+変更のたびにテストを「ついでに」足して育てる(yume-lite の Pre-git ritual)。
+
+## 備考
+
+- `layout.json` の slot 名 `+SP` は旧 space和音設計の名残で、現在は「シフト面」を意味する
+- 原稿は yume-lite Block(履歴32版)+ `書類/novel-editor/manuscript.txt` に自動保存
+- ログ: ne:userDict(確定学習)/ ne:autoDict・ne:observed(自動登録)/ ne:graph(原稿履歴)
