@@ -528,5 +528,10 @@ globalThis.__neImport(bundle);
 assert(plain() === before33, `復元で原稿が巻き戻る: ${JSON.stringify(plain().slice(-6))}`);
 ok('バックアップJSONの書き出し/復元');
 
+// ---- 34. 公証(OpenTimestamps)の安全動作 ----
+await globalThis.__neAnchor(true); // ipc 無し環境では静かにスキップ(例外を出さない)
+assert(true, 'anchorNow はブラウザ/テスト環境で安全');
+ok('公証アンカー(非Electron環境で無害)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

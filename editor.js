@@ -145,6 +145,22 @@ function logEvt(type, data) {
   if (logBuf.length >= 500) flushLog();
 }
 globalThis.__neLogLast = () => logBuf[logBuf.length - 1]; // e2e 用
+
+// 公証: 1日1回、打鍵チェーンの現在ハッシュを OpenTimestamps に刻む(「人が書いた」の外部証明)
+async function anchorNow(force) {
+  if (!ipc) return;
+  const today = new Date().toISOString().slice(0, 10);
+  if (!force && localStorage.getItem('ne:lastAnchorDay') === today) return;
+  if (localStorage.getItem('ne:lastAnchoredHash') === logHash) return; // 書いていない日は刻まない
+  flushLog();
+  try {
+    const r = await ipc.invoke('anchor-hash', { hash: logHash });
+    localStorage.setItem('ne:lastAnchorDay', today);
+    localStorage.setItem('ne:lastAnchoredHash', logHash);
+    status(`公証: 打鍵チェーンを刻みました(${r.count}カレンダー / ${r.sha256.slice(0, 12)}…)`);
+  } catch {}
+}
+globalThis.__neAnchor = anchorNow; // e2e 用
 function flushLog() {
   if (!logBuf.length || !ipc) { logBuf = []; return; }
   const chunk = logBuf.join('\n') + '\n';
@@ -910,8 +926,10 @@ function composingHtml() {
 function render() {
   document.querySelectorAll('.key.hint, .key.hint-chord, .key.cross').forEach((k) => k.classList.remove('hint', 'hint-chord', 'cross'));
   const chartsEl = document.getElementById('charts');
-  if (chartsEl && chartsEl.style)
-    chartsEl.style.display = tut ? '' : !chartOn || tategaki ? 'none' : ''; // 練習中は強制表示、他はオプション(縦書きは常に隠す)
+  const showChart = tut || chartOn; // 練習中は強制表示、それ以外は盤ボタンの設定(縦書きでも出せる)
+  if (chartsEl && chartsEl.style) chartsEl.style.display = showChart ? '' : 'none';
+  if (typeof document.body?.classList?.toggle === 'function')
+    document.body.classList.toggle('with-chart', showChart); // 縦書きのページサイズ計算に反映
   const el = document.getElementById('text');
   if (tut) { renderTut(el); return; }
   el.classList.remove('tut');
@@ -1192,6 +1210,8 @@ async function main() {
   setInterval(() => { if (!tut && text !== (manuscript.content || '')) save(); }, 10000); // 10秒ごと自動保存
   setInterval(llmHarvest, 60000); // 1分ごとに固有名詞の採取
   setInterval(flushLog, 30000); // 打鍵ログの書き出し
+  setTimeout(() => anchorNow(false), 20000); // 起動後に当日分の公証
+  setInterval(() => anchorNow(false), 3600000); // 1時間ごとに「今日まだなら」公証
   if (typeof window !== 'undefined')
     window.addEventListener('beforeunload', () => { if (text !== (manuscript.content || '')) save(); });
   render();

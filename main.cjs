@@ -36,6 +36,45 @@ ipcMain.handle('append-file', (e, { name, content }) => {
   return p;
 });
 
+// 公証: logHash の SHA-256 を OpenTimestamps カレンダーに刻む(Bitcoin ブロックチェーン=改ざん不能な世界時計)。
+// 送るのはハッシュ32バイトのみ。ウォレット不要・無料・原稿の内容は一切出ない。
+const https = require('https');
+const crypto = require('crypto');
+ipcMain.handle('anchor-hash', async (e, { hash }) => {
+  const digest = crypto.createHash('sha256').update(hash).digest();
+  const calendars = [
+    'alice.btc.calendar.opentimestamps.org',
+    'bob.btc.calendar.opentimestamps.org',
+    'finney.calendar.eternitywall.com',
+  ];
+  const proofs = [];
+  await Promise.allSettled(
+    calendars.map(
+      (host) =>
+        new Promise((res, rej) => {
+          const req = https.request({ host, path: '/digest', method: 'POST', timeout: 8000 }, (r) => {
+            const chunks = [];
+            r.on('data', (c) => chunks.push(c));
+            r.on('end', () => {
+              if (r.statusCode === 200) proofs.push({ host, proof: Buffer.concat(chunks).toString('base64') });
+              res();
+            });
+          });
+          req.on('error', rej);
+          req.on('timeout', () => req.destroy(new Error('timeout')));
+          req.write(digest);
+          req.end();
+        })
+    )
+  );
+  if (!proofs.length) throw new Error('no calendar reachable');
+  const dir = path.join(app.getPath('documents'), 'novel-editor');
+  fs.mkdirSync(dir, { recursive: true });
+  const rec = { at: new Date().toISOString(), logHash: hash, sha256: digest.toString('hex'), proofs };
+  fs.appendFileSync(path.join(dir, 'anchors.jsonl'), JSON.stringify(rec) + '\n');
+  return { count: proofs.length, sha256: rec.sha256 };
+});
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1100,
