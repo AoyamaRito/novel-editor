@@ -951,6 +951,18 @@ ok('審査員の合議(不一致は沈黙=能動誤審ゼロ)');
 }
 ok('ABCモード(英数トグル・Shift大文字・数字素通し)');
 
+// ---- 56b. あっと変換=@(キーはトグル専任のため変換ルートで出す) ----
+{
+  down('Enter');
+  await typeWord('あっと');
+  down('Space');
+  assert(html().match(/class="cand">▼([^<]*)</)?.[1] === '@', 'あっと→@が第一候補');
+  down('Space');
+  assert(html().match(/class="cand">▼([^<]*)</)?.[1] === '＠', '第二候補は全角＠');
+  down('AltLeft'); down('Enter');
+}
+ok('あっと変換で@(半角→全角の順)');
+
 // ---- 58. ！？の縦中横(表示だけ1マス、本文は2字のまま) ----
 {
   const toks = (str) => [...str].map((c, i) => ({ c, i }));

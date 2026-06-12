@@ -914,6 +914,7 @@ function lookup(yomi, ctx = '') {
     .map(([s]) => s);
   for (const [s] of baseDict[yomi] || []) if (!list.includes(s)) list.push(s); // 基底はコスト順 [表記,cost]
   if (yomi === 'かっこ') for (const p of ['『』', '（）', '「」']) { const i = list.indexOf(p); if (i >= 0) list.splice(i, 1); list.unshift(p); } // ペア候補(確定でカーソルが中に)
+  if (yomi === 'あっと') for (const p of ['＠', '@']) { const i = list.indexOf(p); if (i >= 0) list.splice(i, 1); list.unshift(p); } // @はトグル専任なので変換で出す(半角が第一候補)
   if (!list.includes(yomi)) list.push(yomi); // 末尾=ひらがな無変換(循環で「開く」が選べる)
   const kata = hiraToKata(yomi);
   if (!list.includes(kata)) list.push(kata); // 最末尾=カタカナ(辞書に無い語もカタカナにできる)
