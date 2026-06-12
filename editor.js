@@ -354,6 +354,8 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     else if (e.e === 'conv') st.conv++;
     else if (e.e === 'pick') st.pick++;
     else if (e.e === 'paste') st.paste.push({ at: new Date(e.t).toISOString(), len: [...(e.s || '')].length });
+    else if (e.e === 'voice') st.voice = (st.voice || 0) + 1;
+    else if (e.e === 'stt') st.sttChars = (st.sttChars || 0) + [...(e.s || '')].length;
     else if (e.e === 'import') st.imports++;
     else if (e.e === 'state') { if (!e.d || e.d === curDocId) st.states.push({ at: new Date(e.t).toISOString(), sha: e.sha, len: e.len }); }
   }
@@ -385,6 +387,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     `- 貼り付け: ${st.paste.length}件 / 合計 ${pasteTotal}字`,
     ...st.paste.slice(-20).map((p) => `  - ${fmt(p.at)} に ${p.len}字`),
     `- バックアップ復元: ${st.imports}件`,
+    `- 音声入力: 録音 ${st.voice || 0}件 / 書き起こし ${st.sttChars || 0}字(本人発話。音声はsha付きでチェーン固定・保存)`,
     '',
     '## 原稿状態チェックポイント(対象作品のみ・保存毎にチェーンへ固定)',
     `- ${st.states.length}件。直近:`,
@@ -422,6 +425,88 @@ async function issueCertificate() {
     a.download = 'certificate.txt';
     a.click();
   }
+}
+
+// ---- 音声入力(同梱 whisper.cpp): 声のログ=生体証拠としても保存 ----
+const WHISPER_URL = 'http://127.0.0.1:18436';
+let rec = null, recChunks = [], recStart = 0;
+function updateMicBtn() {
+  const b = document.getElementById('mic');
+  if (b) { b.textContent = rec ? '⏺' : '🎤'; if (b.classList) b.classList[rec ? 'add' : 'remove']('rec'); }
+}
+function abToB64(buf) {
+  const u8 = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+async function toWav16k(arrayBuf) {
+  const ac = new AudioContext({ sampleRate: 16000 });
+  const audio = await ac.decodeAudioData(arrayBuf.slice(0));
+  ac.close();
+  const ch = audio.getChannelData(0);
+  const pcm = new Int16Array(ch.length);
+  for (let i = 0; i < ch.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32767)));
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const dv = new DataView(buf);
+  const wstr = (o, str) => { for (let i = 0; i < str.length; i++) dv.setUint8(o + i, str.charCodeAt(i)); };
+  wstr(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); wstr(8, 'WAVE');
+  wstr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 16000, true); dv.setUint32(28, 32000, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  wstr(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+  new Int16Array(buf, 44).set(pcm);
+  return buf;
+}
+function voiceInsert(t, sha) {
+  if (mode === 'CAND') confirmCand();
+  snap(true);
+  logEvt('stt', { sha, s: t }); // 書き起こし全文をチェーンに(音声shaと紐づく)
+  text = text.slice(0, cursor) + t + text.slice(cursor);
+  cursor += t.length;
+  committedTo = cursor;
+  viewSpread = -1; followCaret = true;
+  status(`音声入力: ${t.length}字`);
+  render();
+}
+globalThis.__neVoice = voiceInsert; // e2e 用
+async function handleVoice(blob, dur) {
+  const buf = await blob.arrayBuffer();
+  const b64 = abToB64(buf);
+  const sha = sha256hex(b64);
+  const fname = `voice-${Date.now()}.webm`;
+  if (ipc) { try { await ipc.invoke('save-voice', { name: fname, b64 }); } catch {} }
+  logEvt('voice', { f: fname, sha, bytes: buf.byteLength, dur }); // 声そのものを証拠として固定
+  status('書き起こし中…');
+  try {
+    const wav = await toWav16k(buf);
+    const fd = new FormData();
+    fd.append('file', new Blob([wav], { type: 'audio/wav' }), 'a.wav');
+    fd.append('response_format', 'json');
+    const r = await fetch(WHISPER_URL + '/inference', { method: 'POST', body: fd, signal: AbortSignal.timeout(120000) });
+    const t = ((await r.json()).text || '').replace(/\s+/g, '').trim();
+    if (t) voiceInsert(t, sha);
+    else status('書き起こし結果が空でした');
+  } catch { status('書き起こし失敗(whisper起動待ちの可能性)'); }
+}
+async function micToggle() {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) { status('マイク非対応環境です'); return; }
+  if (rec) { rec.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recChunks = []; recStart = Date.now();
+    rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    rec.ondataavailable = (e) => recChunks.push(e.data);
+    rec.onstop = async () => {
+      stream.getTracks().forEach((tr) => tr.stop());
+      const blob = new Blob(recChunks, { type: 'audio/webm' });
+      const dur = Date.now() - recStart;
+      rec = null; updateMicBtn();
+      await handleVoice(blob, dur);
+    };
+    rec.start();
+    updateMicBtn();
+    status('録音中…(🎤でもう一度押すと停止→書き起こし)');
+  } catch { status('マイクの使用が許可されませんでした'); }
 }
 
 // ---- バックアップ/復元: 原稿(履歴ごと)+学習データ+設定を1つのJSONに ----
@@ -1563,6 +1648,8 @@ async function main() {
     render();
   };
   document.getElementById('cert').onclick = issueCertificate;
+  const micBtn = document.getElementById('mic');
+  if (micBtn) micBtn.onclick = micToggle;
   const docSel = document.getElementById('doc');
   refreshDocSel();
   if (docSel) docSel.onchange = (ev) => switchDoc(ev.target.value);

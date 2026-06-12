@@ -19,6 +19,19 @@ function startLlm() {
   llmProc = spawn(bin, ['-m', model, '--port', '18434', '-c', '1024', '--log-disable'], { stdio: 'ignore' });
   llmProc.on('error', () => (llmProc = null));
 }
+// 同梱 whisper(音声入力)。声は証拠としても保存される
+let whisperProc = null;
+function startWhisper() {
+  const base = app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : __dirname;
+  const dir = path.join(base, 'llm');
+  const bin = process.platform === 'win32'
+    ? path.join(dir, 'whisper-win', 'whisper-server.exe')
+    : path.join(dir, 'whisper-mac', 'whisper-server');
+  const model = path.join(dir, 'whisper-small.bin');
+  if (!fs.existsSync(bin) || !fs.existsSync(model)) return;
+  whisperProc = spawn(bin, ['-m', model, '--port', '18436', '-l', 'ja'], { stdio: 'ignore' });
+  whisperProc.on('error', () => (whisperProc = null));
+}
 
 // 自動保存先: 書類/novel-editor/(ユーザから見える実ファイル)
 ipcMain.handle('save-file', (e, { name, content }) => {
@@ -36,6 +49,13 @@ ipcMain.handle('append-file', (e, { name, content }) => {
   return p;
 });
 
+ipcMain.handle('save-voice', (e, { name, b64 }) => {
+  const dir = path.join(app.getPath('documents'), 'novel-editor', 'voice');
+  fs.mkdirSync(dir, { recursive: true });
+  const p = path.join(dir, name);
+  fs.writeFileSync(p, Buffer.from(b64, 'base64'));
+  return p;
+});
 ipcMain.handle('read-file', (e, { name }) => {
   const p = path.join(app.getPath('documents'), 'novel-editor', name);
   return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
@@ -105,10 +125,11 @@ function createWindow() {
 app.whenReady().then(() => {
   if (process.platform === 'darwin') app.dock?.setIcon(path.join(__dirname, 'build', 'icon-1024.png'));
   startLlm();
+  startWhisper();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { try { llmProc?.kill(); } catch {} });
+app.on('will-quit', () => { try { llmProc?.kill(); } catch {} try { whisperProc?.kill(); } catch {} });

@@ -743,5 +743,19 @@ ok('ガリガリ打ち耐性(常時追走+非同期着地)');
 }
 ok('右クリック登録(読み+品詞特定)');
 
+// ---- 46. 音声入力の挿入とチェーン記録 ----
+{
+  down('Enter');
+  const sha46 = globalThis.__neSha('voice-test');
+  globalThis.__neVoice('おんせいでかいたぶん', sha46);
+  assert(plain().endsWith('おんせいでかいたぶん'), '書き起こしがカーソル位置に入る');
+  assert(!html().includes('class="pend"'), '音声入力は確定扱い');
+  const stt46 = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((x) => x.e === 'stt').pop();
+  assert(stt46 && stt46.sha === sha46 && stt46.s === 'おんせいでかいたぶん', 'stt事象が音声shaと全文つきで記録');
+  const cert46 = globalThis.__neCert('', '', null);
+  assert(cert46.includes('音声入力'), '証明書に音声入力の開示欄');
+}
+ok('音声入力(挿入・チェーン記録・証明書開示)');
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
