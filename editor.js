@@ -1620,6 +1620,9 @@ function onKeydown(e) {
   if (rec && rec._ptt && code !== 'MetaLeft') rec._cancel = true; // 他キーが来た=ショートカットだった→破棄
   if (!e.repeat || code === 'Backspace')
     logEvt('k', { c: code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h', ...(e.repeat ? { r: 1 } : {}) });
+  if (code === 'ShiftLeft' || code === 'ShiftRight') {
+    if (typeof document.body?.classList?.toggle === 'function') document.body.classList.toggle('shift-held', true);
+  }
   document.querySelectorAll(`[data-code="${code}"]`).forEach((k) => k.classList.add('hit'));
   statusKey(code);
 
@@ -1770,6 +1773,8 @@ function abcToggle() {
 }
 function onKeyup(e) {
   if (e.target && (e.target.id === 'memo' || e.target.tagName === 'TEXTAREA')) return;
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && typeof document.body?.classList?.toggle === 'function')
+    document.body.classList.toggle('shift-held', !!e.shiftKey); // 離したら単打面へ(もう片方のShiftが押されていれば維持)
   if (e.code === 'MetaLeft' && rec && rec._ptt) rec.stop(); // 左Cmdを離す→書き起こしへ
   document.querySelectorAll(`[data-code="${e.code}"]`).forEach((k) => k.classList.remove('hit'));
 }

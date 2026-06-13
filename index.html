@@ -34,9 +34,13 @@
   .krow { display: flex; justify-content: center; }
   .krow:nth-child(2) { margin-left: 14px; }
   .krow:nth-child(3) { margin-left: 0; }
-  .key { width: 40px; height: 46px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
-  .key .chord { font-size: 11px; line-height: 1; color: #999; }
-  .key .kana { font-size: 16px; line-height: 1; }
+  .key { width: 33px; height: 36px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
+  .key .chord { display: none; font-size: 14px; line-height: 1; }
+  .key .kana { font-size: 14px; line-height: 1; }
+  body.shift-held #chart .key .kana { display: none; }
+  body.shift-held #chart .key .chord { display: block; }
+  #chart .key.hint-chord .chord { display: block; }
+  #chart .key.hint-chord .kana { display: none; }
   .key .label { font-size: 7px; color: #aaa; font-family: monospace; position: absolute; bottom: 1px; right: 3px; }
   .key .gyo-0 { color: #f00000; font-weight: 600; }
   .key .gyo-1 { color: #ff7070; font-weight: 600; }
@@ -51,8 +55,8 @@
   .key .small-kana { color: #9e2b25 !important; font-weight: bold; }
   .key.home { border: 3px solid #1e2f5e; }
   .key.cross { background: #e3f1e9; border-color: #a7cfba; }
-  .key.shiftkey { width: 58px; background: #f4f2ea; }
-  .key.shiftkey .kana { color: #888; font-size: 14px; }
+  .key.shiftkey { width: 48px; background: #f4f2ea; }
+  .key.shiftkey .kana { color: #888; font-size: 12px; display: block !important; }
   .key.hit { background: var(--accent); border-color: var(--accent); }
   .key.hit .kana, .key.hit .chord { color: #fff; }
   footer { display: flex; gap: 16px; padding: 4px 16px; font-family: monospace; font-size: 11px; color: #888; border-top: 1px solid #e5e5e0; }
@@ -108,6 +112,8 @@ body.abc #text{background:#eef4ff}
 body.abc #chart .kana,body.abc #chart .chord{opacity:.12}
 body.abc #chart .key .label{font-size:1.1em;font-weight:800;color:#1d3a6e}
 body.abc #chart .key.fnkey .kana{opacity:1;color:#7a5c1e}
+#chart .key.fnkey .kana{display:block !important}
+.key.hint .kana{display:block !important}
 .pagein .tcy{text-combine-upright:all}
 </style>
 </head>
