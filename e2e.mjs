@@ -1044,6 +1044,17 @@ ok('作品の改名(履歴引き継ぎ+チェーン記録)');
   assert(tocHtml() !== before60 && tocHtml().includes(plain().replace(/⏎/g, '').length + '字'), '打鍵で目次の字数がライブ更新');
   ok('開く=フォルダ(台帳生成・openext記録・目次表示・ライブ更新)');
 
+  // 60b. 粒度の自動調整: 本文が見開き2つ以上に育つと見開きサブ目次が生える
+  {
+    const big = Array.from({ length: 40 }, (_, i) => 'ながいぎょう' + i + 'あ'.repeat(34)).join('\n');
+    globalThis.__nePaste(big); // 既知の外部由来経路で一気に投入
+    assert(tocHtml().includes('class="sp"'), '見開きサブ目次が出る');
+    const spCount = (tocHtml().match(/class="sp"/g) || []).length;
+    assert(spCount >= 2, `見開きが2つ以上: ${spCount}`);
+    assert(/class="sp"[^>]*>\d+　[^<]*ながいぎょう/.test(tocHtml()), 'サブ項目に見開き冒頭の文字');
+  }
+  ok('目次の粒度自動調整(見開きサブ目次+冒頭スニペット)');
+
   // 61. 話切替: 移る前に保存、台帳sha更新、目次の現在話が移る
   await typeWord('かきたし');
   down('Enter');
