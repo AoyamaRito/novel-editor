@@ -2270,7 +2270,7 @@ async function main() {
   document.addEventListener('keyup', onKeyup);
   // クリックでカーソル移動(ドラッグ選択は妨げない)。右クリック=選択語の辞書登録
   document.getElementById('text').addEventListener?.('click', (ev) => {
-    if (tut || ev.button !== 0) return;
+    if (tut || overview || ev.button !== 0) return; // 俯瞰中のカードクリックは専用ハンドラに任せる(確認なしジャンプ)
     if (typeof window !== 'undefined' && !window.getSelection?.().isCollapsed) return; // 選択中は移動しない
     const p = clickOffset(ev);
     if (p == null || p === cursor) return;
