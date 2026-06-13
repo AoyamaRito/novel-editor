@@ -77,6 +77,16 @@
   #toc .ep:hover { background: #eef3ec; }
   #toc .ep.cur { background: #dcefe5; color: var(--accent); font-weight: 600; }
   #toc .ep .len { color: #aaa; font-size: 10px; flex: none; }
+  #text.ov { font-family: sans-serif; padding: 18px 24px; }
+  .ovhead { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 14px; }
+  .ovhead .ovnote { font-size: 10px; color: #aaa; font-weight: normal; margin-left: 12px; }
+  .ovgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .ovcard { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px 12px; cursor: pointer; }
+  .ovcard:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(47,111,79,.15); }
+  .ovtitle { font-size: 13px; font-weight: 600; color: #333; display: flex; justify-content: space-between; }
+  .ovtitle .ovlen { color: #aaa; font-size: 10px; font-weight: normal; }
+  .ovsum { font-size: 11px; color: var(--accent); margin-top: 3px; }
+  .ovbody { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: 11px; color: #888; margin-top: 6px; white-space: pre-wrap; line-height: 1.7; max-height: 70px; overflow: hidden; }
   #keycode { color: var(--accent); min-width: 90px; }
   header select { font-size: 12px; padding: 2px; border: 1px solid #bbb; border-radius: 3px; background: #fff; max-width: 220px; }
   #micsel { max-width: 110px; }
@@ -144,6 +154,7 @@ body.abc #chart .key.fnkey .kana{opacity:1;color:#7a5c1e}
       <button id="sound" title="効果音">♪</button>
       <button id="llm" title="ローカルLLM審査員(2モデル合議)">審…</button>
       <button id="memobtn" title="目次とメモ(メモは作品フォルダの memo.txt。証明の対象外)">目次</button>
+      <button id="ovbtn" title="俯瞰: 全話をカードで見渡す(クリックで移動)">俯瞰</button>
       <hr>
       <button id="save" title="保存(自動保存もあり)">保存</button>
       <button id="export" title="本文txtを書き出す">書出</button>
