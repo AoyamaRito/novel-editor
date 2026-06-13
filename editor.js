@@ -881,7 +881,21 @@ function toggleMemo() {
 let overview = false, ovData = null;
 async function toggleOverview() {
   if (overview) { overview = false; ovData = null; render(); return; }
-  if (!ipc || !curDir || !ledger) { status('俯瞰は作品フォルダを開いてから'); return; }
+  if (!ipc || !curDir || !ledger || ledger.order.length === 1) { // 少ないうちは見開きカードの俯瞰(粒度連動)
+    const sps = spreadsOfCurrent();
+    if (!sps.length || !text.trim()) { status('まだ本文がありません'); return; }
+    ovData = sps.map((sp, i) => {
+      const end = sps[i + 1] ? sps[i + 1].start : text.length;
+      return {
+        name: `見開き ${i + 1}`,
+        len: end - sp.start,
+        sum: '',
+        head: text.slice(sp.start, Math.min(end, sp.start + 260)).split('\n').filter((l) => l.trim()).slice(0, 3).join('\n'),
+        pos: sp.start, sp: i,
+      };
+    });
+    overview = true; render(); return;
+  }
   await save(); // 現状を確定してから見渡す
   ovData = [];
   for (const name of ledger.order) {
@@ -901,10 +915,13 @@ function renderOverview(el) {
   el.classList.remove('tate');
   el.classList.add('ov');
   const total = ovData.reduce((a, d) => a + d.len, 0);
+  const spreadMode = ovData[0] && ovData[0].pos != null;
+  const title = spreadMode ? curDocId.replace('novel:', '') : ledger.name;
+  const unit = spreadMode ? '見開き' : '話';
   el.innerHTML =
-    `<div class="ovhead">俯瞰 — ${ledger.name}(全${ovData.length}話・${total.toLocaleString()}字)<span class="ovnote">クリックでその話へ / Escで戻る</span></div>` +
+    `<div class="ovhead">俯瞰 — ${title}(全${ovData.length}${unit}・${total.toLocaleString()}字)<span class="ovnote">クリックで移動 / Escで戻る</span></div>` +
     `<div class="ovgrid">` +
-    ovData.map((d) => `<div class="ovcard" data-ep="${d.name.replace(/"/g, '&quot;')}">` +
+    ovData.map((d) => `<div class="ovcard" ${d.pos != null ? `data-pos="${d.pos}" data-sp="${d.sp}"` : `data-ep="${d.name.replace(/"/g, '&quot;')}"`}>` +
       `<div class="ovtitle">${d.name.replace(/\.txt$/, '')}<span class="ovlen">${d.len.toLocaleString()}字</span></div>` +
       (d.sum ? `<div class="ovsum">${d.sum.replace(/</g, '&lt;')}</div>` : '') +
       `<div class="ovbody">${d.head.replace(/</g, '&lt;')}</div>` +
@@ -2338,7 +2355,15 @@ async function main() {
   document.getElementById('text').addEventListener?.('click', (ev) => {
     if (!overview) return;
     const card = ev.target.closest?.('.ovcard');
-    if (card && card.dataset?.ep) { const ep = card.dataset.ep; overview = false; ovData = null; openEpisode(ep); }
+    if (!card || !card.dataset) return;
+    if (card.dataset.pos != null && card.dataset.pos !== '') { // 見開きカード→その見開きへ
+      const pos = Number(card.dataset.pos), spn = Number(card.dataset.sp);
+      overview = false; ovData = null;
+      moveCursor(pos);
+      if (tategaki) { viewSpread = spn; }
+      render(); return;
+    }
+    if (card.dataset.ep) { const ep = card.dataset.ep; overview = false; ovData = null; openEpisode(ep); }
   });
   const tocEl = document.getElementById('toc');
   if (tocEl && tocEl.addEventListener) tocEl.addEventListener('click', (ev) => {

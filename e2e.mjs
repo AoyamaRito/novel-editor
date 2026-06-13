@@ -1100,6 +1100,14 @@ ok('作品の改名(履歴引き継ぎ+チェーン記録)');
   globalThis.__nePaste(big2);
   assert(el('toc').innerHTML.includes('class="ep cur"'), 'フォルダ無しでも現在原稿の目次');
   assert((el('toc').innerHTML.match(/class="sp"/g) || []).length >= 2, 'フォルダ無しでも見開きサブ目次');
+  // 64c. フォルダ無しの俯瞰=見開きカード
+  await globalThis.__neFile.toggleOverview();
+  assert(globalThis.__neFile.state().overview === true, 'フォルダ無しでも俯瞰に入れる');
+  const ovh = el('text').innerHTML;
+  assert(ovh.includes('見開き 1') && ovh.includes('見開き'), '見開きカードの俯瞰');
+  assert(/全\d+見開き/.test(ovh), 'ヘッダが見開き単位');
+  down('Escape');
+  assert(globalThis.__neFile.state().overview === false, 'Escで復帰');
 }
 
 console.log(`\nall ${n} tests passed`);
