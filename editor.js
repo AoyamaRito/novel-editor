@@ -190,6 +190,7 @@ async function save() {
       where = p;
     } catch (e) { where = 'localStorage(ディスク保存失敗)'; }
   }
+  refreshEpisodeSel(); // 目次の字数を更新
   status(`保存 (${r.action}) — 履歴 ${manuscript.totalHistory} 版 → ${where}`);
   logEvt('state', { sha: sha256hex(text), len: text.length, d: curDocId }); // 原稿状態の時系列をチェーンに固定(作品ID付き)
   llmHarvest(); // 保存のついでに原稿から固有名詞を採取
@@ -707,6 +708,13 @@ function refreshEpisodeSel() {
   sel.innerHTML = ledger.order.map((n) => `<option value="${n.replace(/"/g, '&quot;')}"${n === curName ? ' selected' : ''}>${n.replace(/\.txt$/, '')}</option>`).join('');
   const fb = document.getElementById('filename');
   if (fb) fb.textContent = ledger.name;
+  const toc = document.getElementById('toc'); // 右パネルの目次(クリックで話を切替)
+  if (toc) {
+    toc.innerHTML = ledger.order.map((n) => {
+      const len = n === curName ? text.length : (ledger.files[n]?.len ?? '');
+      return `<div class="ep${n === curName ? ' cur' : ''}" data-ep="${n.replace(/"/g, '&quot;')}"><span>${n.replace(/\.txt$/, '')}</span><span class="len">${len !== '' ? len + '字' : ''}</span></div>`;
+    }).join('');
+  }
 }
 function adoptEpisode(body) {
   curDocId = 'novel:' + (ledger ? ledger.name : '') + '/' + curName;
@@ -785,7 +793,7 @@ async function newEpisode() {
   await save();
   status(`新しい話: ${name.replace(/\.txt$/, '')}`);
 }
-let memoOpen = localStorage.getItem('ne:memoOpen') === 'on';
+let memoOpen = localStorage.getItem('ne:memoOpen') !== 'off'; // 既定で開く(目次が見える方が親切)
 let memoTimer = null;
 async function loadMemo() {
   const ta = document.getElementById('memo');
@@ -2189,6 +2197,11 @@ async function main() {
   if (rn) rn.onclick = renameDoc;
   const mb = document.getElementById('memobtn');
   if (mb) mb.onclick = toggleMemo;
+  const tocEl = document.getElementById('toc');
+  if (tocEl && tocEl.addEventListener) tocEl.addEventListener('click', (ev) => {
+    const ep = ev.target.closest?.('.ep');
+    if (ep && ep.dataset?.ep) openEpisode(ep.dataset.ep);
+  });
   const ta = document.getElementById('memo');
   if (ta && ta.addEventListener) ta.addEventListener('input', saveMemoSoon);
   if (memoOpen) {
