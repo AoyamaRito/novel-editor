@@ -767,6 +767,7 @@ async function openWork() {
     return;
   }
   await openEpisode(ledger.lastOpen && ledger.order.includes(ledger.lastOpen) ? ledger.lastOpen : ledger.order[0], { noSave: true });
+  if (memoOpen) loadMemo();
 }
 async function newEpisode() {
   if (!ipc || !curDir || !ledger) { status('先に「開く」で作品フォルダを選んでください'); return; }
@@ -783,6 +784,32 @@ async function newEpisode() {
   logEvt('doc', { id: curDocId });
   await save();
   status(`新しい話: ${name.replace(/\.txt$/, '')}`);
+}
+let memoOpen = localStorage.getItem('ne:memoOpen') === 'on';
+let memoTimer = null;
+async function loadMemo() {
+  const ta = document.getElementById('memo');
+  if (!ta) return;
+  let v = '';
+  if (ipc && curDir) { try { v = (await ipc.invoke('read-abs', { p: curDir + '/メモ.txt' })) || ''; } catch {} }
+  else v = localStorage.getItem('ne:memoText') || '';
+  ta.value = v;
+}
+function saveMemoSoon() {
+  clearTimeout(memoTimer);
+  memoTimer = setTimeout(async () => {
+    const ta = document.getElementById('memo');
+    if (!ta) return;
+    if (ipc && curDir) { try { await ipc.invoke('write-abs', { p: curDir + '/メモ.txt', content: ta.value }); } catch {} }
+    else localStorage.setItem('ne:memoText', ta.value);
+  }, 800);
+}
+function toggleMemo() {
+  memoOpen = !memoOpen;
+  localStorage.setItem('ne:memoOpen', memoOpen ? 'on' : 'off');
+  if (typeof document.body?.classList?.toggle === 'function') document.body.classList.toggle('with-memo', memoOpen);
+  if (memoOpen) loadMemo();
+  render();
 }
 async function initFileMode() { // 起動時: 前回の作品フォルダを復元(外部編集もここで検出)
   if (!ipc || !curDir) return;
@@ -1581,6 +1608,7 @@ function tutHint() {
 
 // ---- キーイベント(配列デコード。シフト面=Shiftキー、判定窓なし) ----
 function onKeydown(e) {
+  if (e.target && (e.target.id === 'memo' || e.target.tagName === 'TEXTAREA')) return; // メモ欄はOSに任せる(チェーン対象外の私的ノート)
   const code = e.code;
   if (VOICE_UI && code === 'MetaLeft' && !e.repeat && !rec && !tut) { micToggle(true); return; } // 左Cmd長押し=プッシュトゥトーク(休眠中)
   if (code === 'Escape' && calib) { calib = null; render(); status('声合わせを終了しました'); return; }
@@ -1736,6 +1764,7 @@ function abcToggle() {
   render();
 }
 function onKeyup(e) {
+  if (e.target && (e.target.id === 'memo' || e.target.tagName === 'TEXTAREA')) return;
   if (e.code === 'MetaLeft' && rec && rec._ptt) rec.stop(); // 左Cmdを離す→書き起こしへ
   document.querySelectorAll(`[data-code="${e.code}"]`).forEach((k) => k.classList.remove('hit'));
 }
@@ -2092,7 +2121,8 @@ async function main() {
     registerWord(surf, yomi.trim(), clickOffset(ev) ?? -1);
   });
   // システムIMEがONだと打鍵がOSに横取りされる → 検知して警告
-  document.addEventListener('compositionstart', () => {
+  document.addEventListener('compositionstart', (ev) => {
+    if (ev.target && (ev.target.id === 'memo' || ev.target.tagName === 'TEXTAREA')) return; // メモ欄はOSのIMEで書く場所
     status('⚠ システムの日本語IMEがONです。メニューバーから入力ソースをABC(英数)にしてください');
   });
   document.getElementById('save').onclick = save;
@@ -2147,6 +2177,14 @@ async function main() {
   }
   const rn = document.getElementById('renamedoc');
   if (rn) rn.onclick = renameDoc;
+  const mb = document.getElementById('memobtn');
+  if (mb) mb.onclick = toggleMemo;
+  const ta = document.getElementById('memo');
+  if (ta && ta.addEventListener) ta.addEventListener('input', saveMemoSoon);
+  if (memoOpen) {
+    if (typeof document.body?.classList?.toggle === 'function') document.body.classList.toggle('with-memo', true);
+    loadMemo();
+  }
   const textEl = document.getElementById('text');
   textEl.addEventListener?.('scroll', () => { if (!progScroll && !tategaki) followCaret = false; });
   textEl.addEventListener?.('wheel', (ev) => {

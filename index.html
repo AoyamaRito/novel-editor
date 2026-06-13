@@ -56,15 +56,28 @@
   .key.hit { background: var(--accent); border-color: var(--accent); }
   .key.hit .kana, .key.hit .chord { color: #fff; }
   footer { display: flex; gap: 16px; padding: 4px 16px; font-family: monospace; font-size: 11px; color: #888; border-top: 1px solid #e5e5e0; }
+  #mainrow { flex: 1; display: flex; min-height: 0; }
+  #sidebar { width: 76px; flex: none; display: flex; flex-direction: column; gap: 5px; padding: 10px 6px; border-right: 1px solid #ddd; background: #f4f4f0; font-family: sans-serif; overflow-y: auto; }
+  #sidebar button { font-size: 11px; padding: 5px 2px; border: 1px solid #bbb; background: #fff; border-radius: 4px; cursor: pointer; width: 100%; }
+  #sidebar button:hover { border-color: var(--accent); color: var(--accent); }
+  #sidebar select { font-size: 10px; width: 100%; border: 1px solid #bbb; border-radius: 3px; background: #fff; }
+  #sidebar hr { border: none; border-top: 1px solid #ddd; margin: 3px 0; }
+  #memo-panel { width: 270px; flex: none; display: none; flex-direction: column; border-left: 1px solid #ddd; background: #fbfaf4; }
+  body.with-memo #memo-panel { display: flex; }
+  #memo-panel h3 { font-family: sans-serif; font-size: 12px; color: var(--accent); padding: 8px 10px 4px; font-weight: 600; }
+  #memo-panel .memo-note { font-size: 9px; color: #aaa; font-weight: normal; }
+  #memo { flex: 1; border: none; outline: none; resize: none; background: transparent; padding: 6px 10px 12px; font-family: inherit; font-size: 13px; line-height: 1.8; color: #333; }
   #keycode { color: var(--accent); min-width: 90px; }
-  header select { font-size: 12px; padding: 2px; border: 1px solid #bbb; border-radius: 3px; background: #fff; }
+  header select { font-size: 12px; padding: 2px; border: 1px solid #bbb; border-radius: 3px; background: #fff; max-width: 220px; }
   #micsel { max-width: 110px; }
   #text.flash { background: #fbe9e7; }
   #text.tate { display: flex; align-items: center; justify-content: center; padding: 2px; background: #efece4; }
   .spread { display: flex; flex-direction: row-reverse; gap: 12px; }
   .page { background: #fffdf8; border: 1px solid #d8d2c4; box-shadow: 0 2px 8px rgba(0,0,0,.10); padding: 8px 8px 0; position: relative; }
-  .pagein { writing-mode: vertical-rl; font-size: min(calc((100vh - 118px) / 44), calc((100vw - 90px) / 66)); line-height: 1.85; height: 42em; width: calc(17 * 1.85em); background: repeating-linear-gradient(to left, rgba(60,90,70,.06) 0 1px, transparent 1px calc(1.85em)); }
-  body.with-chart .pagein { font-size: min(calc((100vh - 268px) / 44), calc((100vw - 90px) / 66)); }
+  .pagein { writing-mode: vertical-rl; font-size: min(calc((100vh - 118px) / 44), calc((100vw - 170px) / 66)); line-height: 1.85; height: 42em; width: calc(17 * 1.85em); background: repeating-linear-gradient(to left, rgba(60,90,70,.06) 0 1px, transparent 1px calc(1.85em)); }
+  body.with-chart .pagein { font-size: min(calc((100vh - 268px) / 44), calc((100vw - 170px) / 66)); }
+  body.with-memo .pagein { font-size: min(calc((100vh - 118px) / 44), calc((100vw - 440px) / 66)); }
+  body.with-chart.with-memo .pagein { font-size: min(calc((100vh - 268px) / 44), calc((100vw - 440px) / 66)); }
   .pagein .vl { height: 42em; }
   .pagein .caret { display: inline-block; width: 1em; height: 3px; background: #c2571a; }
   .pageno { text-align: center; font-family: sans-serif; font-size: 9px; color: #aaa; padding: 2px 0 3px; }
@@ -101,31 +114,42 @@ body.abc #chart .key.fnkey .kana{opacity:1;color:#7a5c1e}
 <body>
   <header>
     <span class="title">novel-editor</span>
-    <select id="doc" title="作品の切替"></select>
-    <button id="newdoc" title="新しい作品を作る">＋</button>
-    <button id="openfile" title="作品ファイル(.txt)を開く">開く</button>
-    <button id="newfile" title="新しい作品ファイルを作る">新規</button>
-    <span id="filename" style="font-weight:600;color:#2f6f4f;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-    <button id="renamedoc" title="いまの作品の名前を変える(履歴ごと引き継ぎ)">改名</button>
+    <span id="filename" style="font-weight:600;color:#2f6f4f;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+    <select id="doc" title="話の切替"></select>
+    <button id="newdoc" title="新しい話を作る">＋</button>
     <span id="mode">─</span>
-    <button id="tate" title="縦書き(電撃文庫: 42字×17行・見開き)">横</button>
-    <button id="chartbtn" title="キー配列の表示/非表示">盤</button>
-    <button id="sound">♪</button>
-    <button id="llm" title="ローカルLLM審査員(候補の文脈選択)">審…</button>
-    <button id="tut-btn">練習</button>
-    <select id="tut-stage"></select>
-    <button id="save">保存</button>
-    <button id="export">書き出し</button>
-    <button id="exp-json" title="バックアップJSONをダウンロード(原稿履歴+学習+設定)">⬇json</button>
-    <button id="imp-json" title="バックアップJSONから復元">⬆json</button>
-    <button id="cert" title="著者証明レポートを発行(チェーン検証+執筆統計+外部由来開示)">証</button>
-    <button id="mic" title="音声入力(ローカルwhisper。声は証拠として保存)">🎤</button>
-    <select id="micsel" title="マイクの選択"></select>
-    <button id="vcal" title="声合わせ: 自分の小説を音読してwhisperの聞き癖を採取">声</button>
     <input type="file" id="imp-file" accept=".json" style="display:none">
     <span id="count"></span>
   </header>
-  <div id="text"></div>
+  <div id="mainrow">
+    <nav id="sidebar">
+      <button id="openfile" title="作品フォルダを開く(空フォルダ=新作)">開く</button>
+      <button id="newfile" title="(未使用)">新規</button>
+      <button id="renamedoc" title="改名">改名</button>
+      <button id="tate" title="縦書き(電撃文庫: 42字×17行・見開き)">横</button>
+      <button id="chartbtn" title="キー配列の表示/非表示">盤</button>
+      <button id="sound" title="効果音">♪</button>
+      <button id="llm" title="ローカルLLM審査員(2モデル合議)">審…</button>
+      <button id="memobtn" title="メモ(作品フォルダのメモ.txt。証明の対象外)">メモ</button>
+      <hr>
+      <button id="save" title="保存(自動保存もあり)">保存</button>
+      <button id="export" title="本文txtを書き出す">書出</button>
+      <button id="cert" title="著者証明レポートを発行(チェーン検証+統計+外部由来開示)">証</button>
+      <button id="exp-json" title="バックアップJSON(学習+設定+チェーン頭)">⬇json</button>
+      <button id="imp-json" title="バックアップJSONから復元">⬆json</button>
+      <hr>
+      <button id="tut-btn" title="練習モード">練習</button>
+      <select id="tut-stage"></select>
+      <button id="mic" title="音声入力(休眠中)">🎤</button>
+      <select id="micsel" title="マイクの選択"></select>
+      <button id="vcal" title="声合わせ(休眠中)">声</button>
+    </nav>
+    <div id="text"></div>
+    <aside id="memo-panel">
+      <h3>メモ <span class="memo-note">(作品フォルダのメモ.txt・OSのIMEで書く・証明対象外)</span></h3>
+      <textarea id="memo" placeholder="プロット・固有名詞・伏線など。&#10;ここはOSの日本語入力で書けます。"></textarea>
+    </aside>
+  </div>
   <div id="charts">
     <div class="chart"><h3>上段=Shift / 下段=単打　(紺=ホーム段・<span style="color:#9e2b25">えんじ=小書き・色=行ごと</span>)</h3><div id="chart"></div></div>
   </div>
