@@ -95,7 +95,7 @@
   #text.tate { display: flex; align-items: center; justify-content: center; padding: 2px; background: #efece4; }
   .spread { display: flex; flex-direction: row-reverse; gap: 12px; }
   .page { background: #fffdf8; border: 1px solid #d8d2c4; box-shadow: 0 2px 8px rgba(0,0,0,.10); padding: 8px 8px 0; position: relative; }
-  .pagein { writing-mode: vertical-rl; font-size: min(calc((100vh - 118px) / 44), calc((100vw - 170px) / 66)); line-height: 1.85; height: 42em; width: calc(17 * 1.85em); }
+  .pagein { writing-mode: vertical-rl; font-feature-settings: "vert" 1, "vpal" 1, "vkrn" 1; font-size: min(calc((100vh - 118px) / 44), calc((100vw - 170px) / 66)); line-height: 1.85; height: 42em; width: calc(17 * 1.85em); }
   body.with-chart .pagein { font-size: min(calc((100vh - 268px) / 44), calc((100vw - 170px) / 66)); }
   body.with-chart #text.tate { padding-bottom: 158px; }
   body.with-memo .pagein { font-size: min(calc((100vh - 118px) / 44), calc((100vw - 440px) / 66)); }
