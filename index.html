@@ -29,14 +29,14 @@
   .candinfo { font-size: 11px; color: #999; font-family: sans-serif; }
   .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: text-bottom; animation: blink 1s step-start infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  #charts { display: flex; gap: 24px; justify-content: center; padding: 10px; border-top: 1px solid #ddd; background: #f2f2ee; }
+  #charts { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 24px; justify-content: center; padding: 5px 10px; border: 1px solid #ddd; border-radius: 8px; background: rgba(242,242,238,.93); box-shadow: 0 2px 10px rgba(0,0,0,.08); }
   .chart h3 { font-family: sans-serif; font-size: 11px; color: #777; text-align: center; margin-bottom: 4px; font-weight: normal; }
   .krow { display: flex; justify-content: center; }
   .krow:nth-child(2) { margin-left: 14px; }
   .krow:nth-child(3) { margin-left: 0; }
-  .key { width: 33px; height: 36px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
+  .key { width: 31px; height: 30px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
   .key .chord { display: none; font-size: 14px; line-height: 1; }
-  .key .kana { font-size: 14px; line-height: 1; }
+  .key .kana { font-size: 13px; line-height: 1; }
   body.shift-held #chart .key .kana { display: none; }
   body.shift-held #chart .key .chord { display: block; }
   #chart .key.hint-chord .chord { display: block; }
