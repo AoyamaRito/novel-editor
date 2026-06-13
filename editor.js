@@ -791,7 +791,12 @@ async function loadMemo() {
   const ta = document.getElementById('memo');
   if (!ta) return;
   let v = '';
-  if (ipc && curDir) { try { v = (await ipc.invoke('read-abs', { p: curDir + '/メモ.txt' })) || ''; } catch {} }
+  if (ipc && curDir) {
+    try {
+      v = (await ipc.invoke('read-abs', { p: curDir + '/memo.txt' })) || '';
+      if (!v) v = (await ipc.invoke('read-abs', { p: curDir + '/メモ.txt' })) || ''; // 旧名からの移行読み
+    } catch {}
+  }
   else v = localStorage.getItem('ne:memoText') || '';
   ta.value = v;
 }
@@ -800,7 +805,7 @@ function saveMemoSoon() {
   memoTimer = setTimeout(async () => {
     const ta = document.getElementById('memo');
     if (!ta) return;
-    if (ipc && curDir) { try { await ipc.invoke('write-abs', { p: curDir + '/メモ.txt', content: ta.value }); } catch {} }
+    if (ipc && curDir) { try { await ipc.invoke('write-abs', { p: curDir + '/memo.txt', content: ta.value }); } catch {} }
     else localStorage.setItem('ne:memoText', ta.value);
   }, 800);
 }
