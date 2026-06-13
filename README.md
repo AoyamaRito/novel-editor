@@ -41,7 +41,7 @@ npm start
 2. **自動登録**(autoDict) — ローカルLLMが原稿から固有名詞を採取。原稿に実在する表記のみ・2回観察で登録
 3. **自分のコーパス**(dict.json — 過去作品から生成)
 4. **基底辞書**(basedict.json 190万読み = mozc + IPADIC活用展開 + SKK系 + mozc-UT穴埋め層(jawiki/人名/地名/sudachi、新規読みのみ1候補))
-5. ラティス(最小コスト経路)が複数語の同時変換と分割を決める
+5. ラティス(最小コスト経路)が複数語の同時変換と分割を決める。経路コストには **連接モデル(conn.json)** が乗る — 著者コーパスから導出した **品詞bigram接続コスト**(助詞の前に名詞、補助動詞の連なり等の自然な並びを優先)・**著者表記bigram割引**・**頻度校正された単語コスト**・**かな表記嗜好**(著者が高頻度でかな書きする語=できる/いる/こと… はかな形を優先)。**すべてコーパス由来の決定論的統計で、LLMは一切介在しない**。この層が強いほど、下の審査員(層6)に頼らずに自然な並びが決まる
 6. **ローカルLLM審査員**(同梱2モデルの**合議**: TinySwallow-1.5B + Qwen3-4B)。両者の第一候補が**一致した時だけ**並びを採用、不一致なら沈黙して辞書+文脈学習の順を保つ(実測で能動的誤審ゼロ)。採取・品詞・棚卸しは賢い方(Qwen3)が担当。役割は**変換候補のフィルタ**——
    文脈上あり得ない候補の除去と並べ替え**のみ**。出力は既存候補の番号に拘束され、
    本文の文字を生成・変更する経路は存在しない。**人間の打鍵を変更する動作は一切行わない**。
@@ -59,6 +59,7 @@ npm start
 cd /Users/AoyamaRito/PJs/novel-editor   # corpus/ と data/ があるパイプライン側
 node tools/build-basedict2.js > basedict.json   # mozc/IPADIC/SKK(要 data/ 取得)
 node tools/build-dict.js > dict.json            # 自己コーパス辞書
+node tools/build-conn.js > conn.json            # 連接モデル(品詞bigram接続コスト+表記bigram+かな嗜好)。kuromojiで採取、LLM不要
 node tools/build-drills.js > drills.json        # 練習教材
 node tools/layout-gen.js                        # 配列改訂(anchor)。--fresh は白紙導出
 ```
@@ -87,7 +88,7 @@ node e2e.mjs   # 偽DOM+偽llama-server上で keydown列→描画を検証
 ## ライセンスと同梱物
 
 - コード(editor.js / main.cjs / e2e.mjs / tools/ / vendor/yume-lite-core.js): **MIT**(LICENSE 参照)
-- `dict.json` / `drills.json` / `layout.json`: 作者自身のなろう公開作品から生成した派生データ(MIT 扱いで公開)
+- `dict.json` / `conn.json` / `drills.json` / `layout.json`: 作者自身のなろう公開作品から生成した派生データ(MIT 扱いで公開)
 - `basedict.json`(基底辞書)は**リポジトリに含まれない**。各自 `tools/build-basedict2.js` で生成する:
   - 取得元: mozc dictionary_oss(BSD-3-Clause)、mecab-ipadic-seed(IPAライセンス)、SKK-JISYO L/jinmei/geo/propernoun/station(GPL)、mozc-UT jawiki/personal-names/place-names/sudachidict(各配布条件)
   - 生成物は GPL 等の混合物になるため再配布せず、手元生成・私的利用とする

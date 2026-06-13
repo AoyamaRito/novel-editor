@@ -986,6 +986,26 @@ ok('あっと変換で@(半角→全角の順)');
 }
 ok('！？縦中横(電撃式: 1マス併合+行頭禁則)');
 
+// ---- 初心者モード: 現在行だけを大きく1行表示 ----
+{
+  down('Enter');
+  await typeWord('いちぎょうめ');
+  down('Enter'); // 保留かなを確定
+  down('Enter'); // 改行で2行目へ
+  await typeWord('にぎょうめ');
+  down('Enter'); // 保留かなを確定(カーソルは2行目)
+  globalThis.__neBeginner.toggle();
+  assert(globalThis.__neBeginner.on() === true, '初心者モードに入る');
+  const h = el('text').innerHTML;
+  assert(/class="bline"/.test(h) || el('text').classList._set.has('beginner-line'), '専用1行描画');
+  assert(h.includes('にぎょうめ') && !h.includes('いちぎょうめ'), `現在行だけ表示(前の行は出さない): ${plain()}`);
+  assert(h.includes('caret'), 'キャレットあり');
+  globalThis.__neBeginner.toggle();
+  assert(globalThis.__neBeginner.on() === false, 'もう一度で戻る');
+  down('Enter');
+}
+ok('初心者モード(現在行を大きく1行・盤デカ表示・トグル)');
+
 // ---- 51. 作品の改名(履歴ごと引き継ぎ) ----
 {
   globalThis.window = { prompt: () => 'はじまりの物語', confirm: () => true };
@@ -1108,6 +1128,26 @@ ok('作品の改名(履歴引き継ぎ+チェーン記録)');
   assert(/全\d+見開き/.test(ovh), 'ヘッダが見開き単位');
   down('Escape');
   assert(globalThis.__neFile.state().overview === false, 'Escで復帰');
+}
+
+// ---- 66. 決定論ラティスの連接モデル(conn.json: 品詞bigram+頻度校正+かな嗜好)。LLM非介在 ----
+// __neConv は LLM審査を一切通さない純粋な辞書+最小コスト経路の出力。著者コーパス由来の連接で文体を再現する。
+{
+  const top1 = (y, ctx = '') => (globalThis.__neConv(y, ctx)?.list || [])[0];
+  // 連接コスト+頻度校正: 複数語が一発で自然に割れる
+  assert(top1('かいわする', 'で') === '会話する', `連接: かいわする→${top1('かいわする', 'で')}`);
+  assert(top1('こくはくする', 'に') === '告白する', `連接: こくはくする→${top1('こくはくする', 'に')}`);
+  assert(top1('せいふくしょうじょ', '　') === '征服少女', `複合名詞: ${top1('せいふくしょうじょ', '　')}`);
+  assert(top1('かのじょのかみ') === '彼女の髪', `助詞またぎ: かのじょのかみ→${top1('かのじょのかみ')}`);
+  assert(top1('おもえない', 'は') === '思えない', `活用: おもえない→${top1('おもえない', 'は')}`);
+  // かな嗜好(著者統計): 高かな率の語は単語変換でもかな形が第一候補(出来る/居る/事 に勝つ)
+  assert(top1('できる') === 'できる', `かな嗜好: できる→${top1('できる')}`);
+  assert(top1('いる') === 'いる', `かな嗜好: いる→${top1('いる')}`);
+  assert(top1('こと') === 'こと', `かな嗜好: こと→${top1('こと')}`);
+  // 過剰かな化はしない: 嗜好統計に無い語は従来どおり漢字が勝つ
+  assert(top1('かみ') === '髪', `かな化暴走なし: かみ→${top1('かみ')}`);
+  assert(top1('はしった') === '走った', `活用形: はしった→${top1('はしった')}`);
+  ok('決定論ラティスの連接モデル(LLM非介在で著者文体を再現)');
 }
 
 console.log(`\nall ${n} tests passed`);
