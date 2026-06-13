@@ -71,7 +71,9 @@
   #memo-panel .memo-note { font-size: 9px; color: #aaa; font-weight: normal; }
   #memo { flex: 1; border: none; outline: none; resize: none; background: transparent; padding: 6px 10px 12px; font-family: inherit; font-size: 13px; line-height: 1.8; color: #333; border-top: 1px solid #e7e3d5; }
   #toc { max-height: 42%; overflow-y: auto; font-family: sans-serif; font-size: 12px; padding: 0 6px 8px; }
-  #toc .ep { padding: 4px 8px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; gap: 6px; color: #444; }
+  #toc .ep { padding: 4px 8px; border-radius: 4px; cursor: pointer; color: #444; }
+  #toc .ep .eprow { display: flex; justify-content: space-between; gap: 6px; }
+  #toc .ep .sum { font-size: 10px; color: #999; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
   #toc .ep:hover { background: #eef3ec; }
   #toc .ep.cur { background: #dcefe5; color: var(--accent); font-weight: 600; }
   #toc .ep .len { color: #aaa; font-size: 10px; flex: none; }
