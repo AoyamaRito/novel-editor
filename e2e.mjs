@@ -1093,6 +1093,13 @@ ok('作品の改名(履歴引き継ぎ+チェーン記録)');
   delete globalThis.__neTap;
   globalThis.__neFile.setIpc(null);
   globalThis.__neFile.reset();
+
+  // 64b. フォルダ無しでも目次は出る(見開きサブ目次つき)
+  down('Enter');
+  const big2 = Array.from({ length: 40 }, (_, i) => 'むだなぎょう' + i + 'い'.repeat(34)).join('\n');
+  globalThis.__nePaste(big2);
+  assert(el('toc').innerHTML.includes('class="ep cur"'), 'フォルダ無しでも現在原稿の目次');
+  assert((el('toc').innerHTML.match(/class="sp"/g) || []).length >= 2, 'フォルダ無しでも見開きサブ目次');
 }
 
 console.log(`\nall ${n} tests passed`);
