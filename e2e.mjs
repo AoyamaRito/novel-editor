@@ -50,6 +50,9 @@ globalThis.fetch = async (p, opts = {}) => {
     if (url.endsWith('/health')) return { json: async () => ({ status: 'ok' }) };
     // /v1/chat/completions: 審査員 or 採取の偽応答
     const pr = JSON.parse(opts.body).messages[0].content;
+    if (pr.includes('一行に要約')) {
+      return { json: async () => ({ choices: [{ message: { content: llmStub.sumReply || 'ねこのはなし' } }] }) };
+    }
     if (pr.includes('棚卸し')) {
       return { json: async () => ({ choices: [{ message: { content: llmStub.curateReply || 'なし' } }] }) };
     }
@@ -849,7 +852,7 @@ ok('声合わせ(聞き癖採取→かな化の正解例示)');
   const parsed = globalThis.__neWork.parse(legacy);
   assert(parsed.body === 'ほんぶん' && parsed.meta && parsed.verified === false, '旧形式: 本文剥がし+sha不一致は検出');
   const noMeta = globalThis.__neWork.parse('ただのテキスト\n');
-  assert(noMeta.meta === null && noMeta.body === 'ただのテキスト', 'メタ無しの素txtも本文として読める');
+  assert(noMeta.meta === null && noMeta.body === 'ただのテキスト\n', 'メタ無しの素txtは無加工で読める(改行剥がしはsha事故の元)');
 }
 ok('証明構造(台帳sha+チェーン錨、旧埋め込み形式の互換読み)');
 
@@ -999,6 +1002,83 @@ ok('！？縦中横(電撃式: 1マス併合+行頭禁則)');
   assert(st51.d === 'novel:はじまりの物語', '以後のstateは新IDで固定される');
 }
 ok('作品の改名(履歴引き継ぎ+チェーン記録)');
+
+// ---- 60〜63. フォルダ正本系(偽ipc): 目次・話切替・外部編集検出・俯瞰 ----
+{
+  const fakeFS = new Map();
+  const fakeIpc = {
+    invoke: async (ch, args) => {
+      if (ch === 'open-dir-dialog') return '/work';
+      if (ch === 'read-abs') return fakeFS.has(args.p) ? fakeFS.get(args.p) : null;
+      if (ch === 'write-abs') { fakeFS.set(args.p, args.content); return args.p; }
+      if (ch === 'list-dir') {
+        const pre = args.p + '/';
+        const SYSTEM = new Set(['chainhead.txt', 'memo.txt']);
+        return [...fakeFS.keys()].filter((k) => k.startsWith(pre) && k.endsWith('.txt') && !SYSTEM.has(k.slice(pre.length))).map((k) => k.slice(pre.length)).sort();
+      }
+      if (ch === 'save-file') return '/docs/' + args.name;
+      return null;
+    },
+  };
+  fakeFS.set('/work/第1話.txt', '　いちわのほんぶんです。\nつづきの行。');
+  fakeFS.set('/work/第2話.txt', '　にわのほんぶんです。');
+  if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.window.confirm = () => true;
+  globalThis.__neFile.setIpc(fakeIpc);
+  const fileEvs = [];
+  globalThis.__neTap = (e, d) => { if (['open', 'openext', 'extedit'].includes(e)) fileEvs.push({ e, ...d }); };
+
+  // 60. 開く: フォルダ→台帳生成+外部由来記録+目次
+  await globalThis.__neFile.openWork();
+  let st = globalThis.__neFile.state();
+  assert(st.curDir === '/work' && st.curName === '第1話.txt', `第1話が開く: ${st.curName}`);
+  assert(plain().includes('いちわのほんぶん'), '本文が読み込まれた');
+  assert(fileEvs.some((e) => e.e === 'openext' && e.f === '第1話.txt'), '台帳に無い話=外部由来(openext)を記録');
+  assert(fakeFS.has('/work/novel-editor.json'), '台帳が書かれた');
+  const tocHtml = () => el('toc').innerHTML;
+  assert(tocHtml().includes('第1話') && tocHtml().includes('第2話'), '目次に全話');
+  assert(tocHtml().includes('cur'), '現在話のハイライト');
+  ok('開く=フォルダ(台帳生成・openext記録・目次表示)');
+
+  // 61. 話切替: 移る前に保存、台帳sha更新、目次の現在話が移る
+  await typeWord('かきたし');
+  down('Enter');
+  await globalThis.__neFile.openEpisode('第2話.txt');
+  st = globalThis.__neFile.state();
+  assert(st.curName === '第2話.txt' && plain().includes('にわのほんぶん'), '第2話に切替');
+  assert(fakeFS.get('/work/第1話.txt').includes('かきたし'), '切替前に第1話が保存された');
+  const led = JSON.parse(fakeFS.get('/work/novel-editor.json'));
+  assert(led.files['第1話.txt'].sha && led.files['第1話.txt'].head.includes('いちわ'), '台帳にsha+一行目(head)');
+  assert(fileEvs.some((e) => e.e === 'openext' && e.f === '第2話.txt'), '初見の話もopenext');
+  await globalThis.__neFile.openEpisode('第1話.txt'); // 既知+sha整合の再訪
+  assert(fileEvs.some((e) => e.e === 'open' && e.f === '第1話.txt'), '台帳と整合の再訪はopen事象');
+  ok('話切替(自動保存→openext/open記録→台帳sha/head更新)');
+
+  // 62. 外部編集の検出: shaが合わない話を開くとextedit(確認の上で再基準化)
+  fakeFS.set('/work/第2話.txt', '　そとでかきかえた。');
+  await globalThis.__neFile.openEpisode('第2話.txt');
+  assert(fileEvs.some((e) => e.e === 'extedit' && e.f === '第2話.txt'), '外部編集=extedit記録');
+  assert(plain().includes('そとでかきかえた'), '再基準化して開いた');
+  ok('外部編集の検出(sha不一致→extedit→再基準化)');
+
+  // 63. 俯瞰: 全話カード+字数合計、Escで復帰
+  await globalThis.__neFile.toggleOverview();
+  st = globalThis.__neFile.state();
+  assert(st.overview === true, '俯瞰モードに入った');
+  const ov = el('text').innerHTML;
+  assert(ov.includes('ovcard') && ov.includes('第1話') && ov.includes('第2話'), '全話のカード');
+  assert(ov.includes('全2話'), '俯瞰ヘッダに話数');
+  assert(ov.includes('かきたし') || ov.includes('いちわ'), 'カードに冒頭プレビュー');
+  down('Escape');
+  assert(globalThis.__neFile.state().overview === false, 'Escで俯瞰から復帰');
+  assert(el('text').innerHTML.includes('caret'), '執筆画面に戻った');
+  ok('俯瞰(全画面カード・話数/字数・Esc復帰)');
+
+  // 後片付け: 以降のテストと実行環境を汚さない
+  delete globalThis.__neTap;
+  globalThis.__neFile.setIpc(null);
+  globalThis.__neFile.reset();
+}
 
 console.log(`\nall ${n} tests passed`);
 process.exit(0);
