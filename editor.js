@@ -726,16 +726,19 @@ function refreshEpisodeSel() {
   sel.innerHTML = ledger.order.map((n) => `<option value="${n.replace(/"/g, '&quot;')}"${n === curName ? ' selected' : ''}>${n.replace(/\.txt$/, '')}</option>`).join('');
   const fb = document.getElementById('filename');
   if (fb) fb.textContent = ledger.name;
-  const toc = document.getElementById('toc'); // 右パネルの目次(クリックで話を切替+LLM一行要約)
-  if (toc) {
-    toc.innerHTML = ledger.order.map((n) => {
-      const f = ledger.files[n] || {};
-      const len = n === curName ? text.length : (f.len ?? '');
-      const s1 = f.summary || f.head || ''; // 要約が無ければ本文一行目
-      const sum = s1 ? `<div class="sum">${s1.replace(/</g, '&lt;')}</div>` : '';
-      return `<div class="ep${n === curName ? ' cur' : ''}" data-ep="${n.replace(/"/g, '&quot;')}"><div class="eprow"><span>${n.replace(/\.txt$/, '')}</span><span class="len">${len !== '' ? len + '字' : ''}</span></div>${sum}</div>`;
-    }).join('');
-  }
+  refreshToc();
+}
+function refreshToc() { // 目次(クリックで話を切替+要約/一行目)。現在話は打鍵のたびにライブ更新
+  const toc = document.getElementById('toc');
+  if (!toc || !ledger) return;
+  toc.innerHTML = ledger.order.map((n) => {
+    const f = ledger.files[n] || {};
+    const cur = n === curName;
+    const len = cur ? text.length : (f.len ?? '');
+    const s1 = cur ? (f.summary && f.sumSha === sha256hex(text) ? f.summary : firstLineOf(text)) : (f.summary || f.head || '');
+    const sum = s1 ? `<div class="sum">${s1.replace(/</g, '&lt;')}</div>` : '';
+    return `<div class="ep${cur ? ' cur' : ''}" data-ep="${n.replace(/"/g, '&quot;')}"><div class="eprow"><span>${n.replace(/\.txt$/, '')}</span><span class="len">${len !== '' ? len + '字' : ''}</span></div>${sum}</div>`;
+  }).join('');
 }
 function adoptEpisode(body) {
   curDocId = 'novel:' + (ledger ? ledger.name : '') + '/' + curName;
@@ -1986,6 +1989,7 @@ function render() {
     return;
   }
   el.classList.remove('tut');
+  refreshToc(); // 現在話の字数・一行目をライブ反映
   if (typeof document.body?.classList?.toggle === 'function') document.body.classList.toggle('ov-full', !!(overview && ovData));
   if (overview && ovData) { renderOverview(el); return; }
   el.classList.remove('ov');

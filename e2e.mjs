@@ -1038,7 +1038,11 @@ ok('作品の改名(履歴引き継ぎ+チェーン記録)');
   const tocHtml = () => el('toc').innerHTML;
   assert(tocHtml().includes('第1話') && tocHtml().includes('第2話'), '目次に全話');
   assert(tocHtml().includes('cur'), '現在話のハイライト');
-  ok('開く=フォルダ(台帳生成・openext記録・目次表示)');
+  // 目次のライブ更新: 打った瞬間に字数と一行目が変わる
+  const before60 = tocHtml();
+  await typeWord('こんにちは');
+  assert(tocHtml() !== before60 && tocHtml().includes(plain().replace(/⏎/g, '').length + '字'), '打鍵で目次の字数がライブ更新');
+  ok('開く=フォルダ(台帳生成・openext記録・目次表示・ライブ更新)');
 
   // 61. 話切替: 移る前に保存、台帳sha更新、目次の現在話が移る
   await typeWord('かきたし');
