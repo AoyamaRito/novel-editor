@@ -25,7 +25,7 @@
   .tatewrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
   #pgbar { width: 58%; accent-color: var(--accent); direction: rtl; }
   #curline { position: absolute; left: 0; right: 0; height: 2.1em; background: rgba(47,111,79,.07); pointer-events: none; z-index: 0; }
-  .vl.cur-line { background: rgba(47,111,79,.09); box-shadow: inset -2.5px 0 0 rgba(47,111,79,.5); } /* レイアウトに影響しない現在行マーカー(旧border+負マージンは1pxズレの元) */
+  .vl.cur-line { background: rgba(47,111,79,.09); box-shadow: inset 2px 0 0 rgba(60,90,70,.09), inset -2.5px 0 0 rgba(47,111,79,.5); } /* 現在行: 左は罫線・右はマーカー */
   .candinfo { font-size: 11px; color: #999; font-family: sans-serif; }
   .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: text-bottom; animation: blink 1s step-start infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -100,7 +100,7 @@
   body.with-chart #text.tate { padding-bottom: 158px; }
   body.with-memo .pagein { font-size: min(calc((100vh - 118px) / 44), calc((100vw - 440px) / 66)); }
   body.with-chart.with-memo .pagein { font-size: min(calc((100vh - 268px) / 44), calc((100vw - 440px) / 66)); }
-  .pagein .vl { height: 42em; border-left: 1px solid rgba(60,90,70,.10); } /* 罫線は行自身の境界に描く(背景グラデは丸め誤差で行とズレる) */
+  .pagein .vl { height: 42em; box-shadow: inset 2px 0 0 rgba(60,90,70,.09), inset -2px 0 0 rgba(60,90,70,.09); } /* 原稿用紙式: 行の左右に二重罫線(行自身に描くのでズレない) */
   .pagein .caret { display: inline-block; width: 1em; height: 3px; background: #c2571a; }
   .pageno { text-align: center; font-family: sans-serif; font-size: 9px; color: #aaa; padding: 2px 0 3px; }
   #text.tut { display: flex; align-items: center; justify-content: center; }
