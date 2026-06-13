@@ -34,13 +34,12 @@
   .krow { display: flex; justify-content: center; }
   .krow:nth-child(2) { margin-left: 14px; }
   .krow:nth-child(3) { margin-left: 0; }
-  .key { width: 31px; height: 30px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
-  .key .chord { display: none; font-size: 14px; line-height: 1; }
+  .key { width: 31px; height: 38px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
+  .key .chord { display: block; font-size: 10px; line-height: 1; opacity: .75; }
   .key .kana { font-size: 13px; line-height: 1; }
-  body.shift-held #chart .key .kana { display: none; }
-  body.shift-held #chart .key .chord { display: block; }
-  #chart .key.hint-chord .chord { display: block; }
-  #chart .key.hint-chord .kana { display: none; }
+  body.shift-held #chart .key .kana { opacity: .18; }
+  body.shift-held #chart .key .chord { font-size: 14px; opacity: 1; }
+  #chart .key.hint-chord .chord { font-size: 14px; opacity: 1; }
   .key .label { font-size: 7px; color: #aaa; font-family: monospace; position: absolute; bottom: 1px; right: 3px; }
   .key .gyo-0 { color: #f00000; font-weight: 600; }
   .key .gyo-1 { color: #ff7070; font-weight: 600; }
