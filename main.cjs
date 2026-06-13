@@ -8,6 +8,8 @@ const { spawn } = require('child_process');
 
 // 同梱ローカルLLM。審査は2モデルの合議(TinySwallow-1.5B + Qwen3-4B)、採取系は賢い方(model2)
 let llmProc = null, llmProc2 = null;
+if (!app.requestSingleInstanceLock()) app.quit(); // 二重起動禁止(LLMポートの取り合い防止)
+
 function startLlm() {
   const base = app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : __dirname;
   const dir = path.join(base, 'llm');
@@ -84,7 +86,8 @@ ipcMain.handle('open-dir-dialog', async () => {
 });
 ipcMain.handle('read-abs', (e, { p }) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null));
 ipcMain.handle('list-dir', (e, { p }) => {
-  try { return fs.readdirSync(p).filter((f) => f.endsWith('.txt') && !f.startsWith('.')); } catch { return []; }
+  const SYSTEM = new Set(['chainhead.txt', 'memo.txt']); // アプリの管理ファイルは話ではない
+  try { return fs.readdirSync(p).filter((f) => f.endsWith('.txt') && !f.startsWith('.') && !SYSTEM.has(f)); } catch { return []; }
 });
 ipcMain.handle('new-dialog', async () => {
   const r = await dialog.showSaveDialog({

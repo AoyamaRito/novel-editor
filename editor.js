@@ -781,6 +781,8 @@ async function openWork() {
   if (!ipc) { status('作品フォルダを開くのは Electron 実行時のみです'); return; }
   const dir = await ipc.invoke('open-dir-dialog');
   if (!dir) return;
+  const guard = await ipc.invoke('read-abs', { p: dir + '/chainhead.txt' }); // データ置き場を作品にしない
+  if (guard) { status('そこはアプリのデータ置き場です。別のフォルダを選んでください'); return; }
   curDir = dir; curName = null;
   ledger = await loadLedger(dir);
   const disk = await ipc.invoke('list-dir', { p: dir });
