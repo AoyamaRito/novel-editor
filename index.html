@@ -77,16 +77,17 @@
   #toc .ep:hover { background: #eef3ec; }
   #toc .ep.cur { background: #dcefe5; color: var(--accent); font-weight: 600; }
   #toc .ep .len { color: #aaa; font-size: 10px; flex: none; }
-  #text.ov { font-family: sans-serif; padding: 18px 24px; }
-  .ovhead { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 14px; }
-  .ovhead .ovnote { font-size: 10px; color: #aaa; font-weight: normal; margin-left: 12px; }
-  .ovgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-  .ovcard { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px 12px; cursor: pointer; }
-  .ovcard:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(47,111,79,.15); }
-  .ovtitle { font-size: 13px; font-weight: 600; color: #333; display: flex; justify-content: space-between; }
-  .ovtitle .ovlen { color: #aaa; font-size: 10px; font-weight: normal; }
-  .ovsum { font-size: 11px; color: var(--accent); margin-top: 3px; }
-  .ovbody { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: 11px; color: #888; margin-top: 6px; white-space: pre-wrap; line-height: 1.7; max-height: 70px; overflow: hidden; }
+  #text.ov { font-family: sans-serif; padding: 22px 34px; background: #ece9df; }
+  body.ov-full #sidebar, body.ov-full #memo-panel, body.ov-full #charts { display: none; }
+  .ovhead { font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 18px; }
+  .ovhead .ovnote { font-size: 11px; color: #aaa; font-weight: normal; margin-left: 14px; }
+  .ovgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
+  .ovcard { border: 1px solid #d5cfbe; border-radius: 10px; background: #fffdf6; padding: 14px 16px 12px; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,.07); min-height: 150px; transition: transform .08s; }
+  .ovcard:hover { border-color: var(--accent); box-shadow: 0 4px 14px rgba(47,111,79,.22); transform: translateY(-2px); }
+  .ovtitle { font-size: 16px; font-weight: 700; color: #2a2a26; display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #e8e2d0; padding-bottom: 6px; }
+  .ovtitle .ovlen { color: #aaa; font-size: 11px; font-weight: normal; }
+  .ovsum { font-size: 12.5px; color: var(--accent); font-weight: 600; margin-top: 7px; }
+  .ovbody { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: 12px; color: #777; margin-top: 8px; white-space: pre-wrap; line-height: 1.8; max-height: 130px; overflow: hidden; mask-image: linear-gradient(#000 60%, transparent); -webkit-mask-image: linear-gradient(#000 60%, transparent); }
   #keycode { color: var(--accent); min-width: 90px; }
   header select { font-size: 12px; padding: 2px; border: 1px solid #bbb; border-radius: 3px; background: #fff; max-width: 220px; }
   #micsel { max-width: 110px; }

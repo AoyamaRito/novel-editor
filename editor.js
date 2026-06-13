@@ -1977,6 +1977,7 @@ function render() {
     return;
   }
   el.classList.remove('tut');
+  if (typeof document.body?.classList?.toggle === 'function') document.body.classList.toggle('ov-full', !!(overview && ovData));
   if (overview && ovData) { renderOverview(el); return; }
   el.classList.remove('ov');
   if (tategaki) { renderTate(el); return; }
