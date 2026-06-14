@@ -290,6 +290,10 @@ globalThis.__neMove = moveCursor; // e2e 用
 // 用途: 配列の実測再最適化(キー間遷移時間)・弱点ドリル・審査員の採用率・速度曲線
 let logBuf = [];
 let logHash = localStorage.getItem('ne:logHash') || '0';
+// Phase1: 本番は正本チェーンを main が所有。renderer は生イベントを rawBuf に貯めて prov-append で送る。
+// logHash/logBuf は局所シャドウ(表示・e2e・オフライン用。本番の証明書は main の log.jsonl を読む)。
+let rawBuf = [];
+let mainHead = null; // main 所有の正本 head
 // SHA-256(チェーン用)。Electron では node crypto、無ければ同期純JS実装(e2e で node:crypto と一致検証済み)
 const nodeCrypto = typeof window !== 'undefined' && window.require ? window.require('crypto') : null;
 const SHA_K = [
@@ -339,14 +343,16 @@ function sha256hex(str) {
 }
 globalThis.__neSha = sha256hex; // e2e 用(node:crypto との一致検証)
 function logEvt(type, data) {
-  // 各行が前行のハッシュを含む append-only チェーン(SHA-256)。
-  // 決定的エンジン+このログ=原稿を打鍵から再導出できる=「人が書いた」検証可能な証拠
-  const body = JSON.stringify({ t: Date.now(), e: type, ...data, p: logHash });
+  // 局所シャドウ(各行が前行のSHA-256を含む append-only)。表示・e2e・オフライン用。本番の正本は main。
+  const t = Date.now();
+  const body = JSON.stringify({ t, e: type, ...data, p: logHash });
   logHash = sha256hex(logHash + body);
   localStorage.setItem('ne:logHash', logHash);
   logBuf.push(body);
+  if (ipc && logBuf.length > 2000) logBuf.splice(0, logBuf.length - 1000); // シャドウのメモリ上限(本番は不要なので刈る)
   if (globalThis.__neTap) globalThis.__neTap(type, data); // e2e 用(flushで消えないイベント観測点)
-  if (logBuf.length >= 500) flushLog();
+  if (ipc) { rawBuf.push({ t, e: type, ...data }); if (rawBuf.length >= 64) flushLog(); } // 正本は main(prov-append)へ
+  else if (logBuf.length >= 500) flushLog();
 }
 globalThis.__neLogLast = () => logBuf[logBuf.length - 1]; // e2e 用
 globalThis.__neLogAll = () => logBuf.slice();
@@ -366,24 +372,30 @@ globalThis.__neSynthKeys = () => synthKeys; // e2e/監査用
 // 公証: 1日1回、打鍵チェーンの現在ハッシュを OpenTimestamps に刻む(「人が書いた」の外部証明)
 async function anchorNow(force) {
   if (!ipc) return;
+  await flushLog(); // 未送信の生イベントを main へ。main の正本 head を最新化
+  let h = mainHead;
+  if (!h) { try { h = (await ipc.invoke('prov-head')).head; mainHead = h; } catch { return; } }
   const today = new Date().toISOString().slice(0, 10);
   if (!force && localStorage.getItem('ne:lastAnchorDay') === today) return;
-  if (localStorage.getItem('ne:lastAnchoredHash') === logHash) return; // 書いていない日は刻まない
-  flushLog();
+  if (localStorage.getItem('ne:lastAnchoredHash') === h) return; // 書いていない日は刻まない
   try {
-    const r = await ipc.invoke('anchor-hash', { hash: logHash });
+    const r = await ipc.invoke('anchor-hash', { hash: h }); // 公証するのは main 所有の正本 head
     localStorage.setItem('ne:lastAnchorDay', today);
-    localStorage.setItem('ne:lastAnchoredHash', logHash);
+    localStorage.setItem('ne:lastAnchoredHash', h);
     status(`公証: 打鍵チェーンを刻みました(${r.count}カレンダー / ${r.sha256.slice(0, 12)}…)`);
   } catch {}
 }
 globalThis.__neAnchor = anchorNow; // e2e 用
 function flushLog() {
-  if (!logBuf.length || !ipc) { logBuf = []; return; }
-  const chunk = logBuf.join('\n') + '\n';
-  logBuf = [];
-  ipc.invoke('append-file', { name: 'log.jsonl', content: chunk }).catch(() => {});
-  ipc.invoke('save-file', { name: 'chainhead.txt', content: logHash }).catch(() => {}); // localStorage 消失への保険
+  if (ipc) {
+    if (!rawBuf.length) return Promise.resolve();
+    const events = rawBuf; rawBuf = [];
+    // main が正本チェーンを伸ばす。renderer はハッシュを計算しない=偽造不能。chainhead も main が保存。
+    try { return Promise.resolve(ipc.invoke('prov-append', { events })).then((r) => { if (r && r.head) mainHead = r.head; return r; }).catch(() => {}); }
+    catch { return Promise.resolve(); }
+  }
+  logBuf = []; // オフライン: メモリのみ(従来どおり)
+  return Promise.resolve();
 }
 globalThis.__neLogSize = () => logBuf.length; // e2e 用
 
@@ -608,13 +620,14 @@ th{background:#f6f8fa} .ai{color:#b03030} .me{color:#2a8a4a;font-weight:bold}
 globalThis.__neExhibit = buildCourtExhibit; // e2e 用
 
 async function issueCertificate() {
-  flushLog();
-  let logText = '', anchorsText = '';
+  await flushLog();
+  let logText = '', anchorsText = '', expectedHead = logHash;
   if (ipc) {
     try { logText = (await ipc.invoke('read-file', { name: 'log.jsonl' })) || ''; } catch {}
     try { anchorsText = (await ipc.invoke('read-file', { name: 'anchors.jsonl' })) || ''; } catch {}
+    try { expectedHead = (await ipc.invoke('prov-head')).head; } catch {} // 正本 head は main から
   }
-  const exhibit = buildCourtExhibit(logText, anchorsText, logHash, { len: text.length }); // 法廷用(素人向けHTML)が主
+  const exhibit = buildCourtExhibit(logText, anchorsText, expectedHead, { len: text.length }); // 法廷用(素人向けHTML)が主
   if (ipc) {
     const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const p = await ipc.invoke('export-dialog', { defaultName: `執筆過程レポート-${d}.html`, content: exhibit });

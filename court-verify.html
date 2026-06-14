@@ -132,6 +132,7 @@ function verifyAndRender(logText, anchorsText){
 <tr><td>考える間(2秒以上の停止)</td><td><span class="num">${C(pauses)}</span> 回</td></tr>
 <tr><td>タイポ修正の塊(連続Backspace)</td><td><span class="num">${C(bursts)}</span> 回</td></tr>
 <tr><td>推敲(文字数が減って書き直した)</td><td><span class="num">${C(revisions)}</span> 回 — <b>AIの一括生成では起きない人間の所作</b></td></tr>
+<tr><td>合成イベント(非ハード入力)</td><td>${synth?`<span class="ng">${C(synth)} 件 ⚠ ハード打鍵でない疑い</span>`:'<span class="ok">0 件(全て実キー入力)</span>'}</td></tr>
 </table>
 
 <h2>外部由来テキストの開示(全件)</h2>
