@@ -68,7 +68,7 @@ function verifyAndRender(logText, anchorsText){
   if(!lines.length) return '<div class="banner ng">✗ ログが空です。log.jsonl を読み込んでください。</div>';
   // --- チェーン検証 + 1パス解析 ---
   let head=(()=>{try{return JSON.parse(lines[0]).p??'0'}catch{return '0'}})(), broken=-1;
-  const ks=[],states=[],pastes=[]; let bs=0,synth=0,tMin=null,tMax=null,night=0,docId='';
+  const ks=[],states=[],pastes=[]; let bs=0,synth=0,tMin=null,tMax=null,night=0,docId='',switches=0;
   for(let i=0;i<lines.length;i++){
     let e; try{e=JSON.parse(lines[i])}catch{if(broken<0)broken=i;continue}
     if(broken<0){ if(e.p!==head)broken=i; else { head=sha256hex(head+lines[i]); if(anchorHeads.has(head))foundHeads.add(head); } }
@@ -76,6 +76,7 @@ function verifyAndRender(logText, anchorsText){
     if(e.e==='k'){ks.push({t:e.t,bs:e.c==='Backspace'}); if(e.c==='Backspace')bs++; if(e.u)synth++; const h=new Date(e.t).getHours(); if(h>=22||h<5)night++;}
     else if(e.e==='state'){states.push({t:e.t,len:e.len}); if(e.d&&!docId)docId=e.d;}
     else if(e.e==='paste')pastes.push({t:e.t,len:[...(e.s||'')].length});
+    else if(e.e==='focus'&&e.s===0)switches++;
   }
   const chainOk=broken<0;
   const anchorOk=anchorHeads.size===0||foundHeads.size===anchorHeads.size;
@@ -131,6 +132,7 @@ function verifyAndRender(logText, anchorsText){
 <table>
 <tr><td>考える間(2秒以上の停止)</td><td><span class="num">${C(pauses)}</span> 回</td></tr>
 <tr><td>タイポ修正の塊(連続Backspace)</td><td><span class="num">${C(bursts)}</span> 回</td></tr>
+<tr><td>寄り道(他アプリへ切替)</td><td><span class="num">${C(switches)}</span> 回 — 人間的な中断(ボットには無い散らかり)</td></tr>
 <tr><td>推敲(文字数が減って書き直した)</td><td><span class="num">${C(revisions)}</span> 回 — <b>AIの一括生成では起きない人間の所作</b></td></tr>
 <tr><td>合成イベント(非ハード入力)</td><td>${synth?`<span class="ng">${C(synth)} 件 ⚠ ハード打鍵でない疑い</span>`:'<span class="ok">0 件(全て実キー入力)</span>'}</td></tr>
 </table>

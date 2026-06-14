@@ -1172,7 +1172,8 @@ ok('作品の改名(履歴引き継ぎ+チェーン記録)');
   assert(ex.includes('人間の打鍵'), '素人向けの物語(人間の打鍵)が含まれる');
   assert(ex.includes('<svg'), '可視化(SVG)が含まれる');
   assert(ex.includes('append-only') && ex.includes('技術的裏付け'), '技術裏付けが専門家用に添えられる');
-  ok('C2 法廷exhibit(素人向けHTML+AI対比+技術裏付け)');
+  assert(ex.includes('寄り道'), 'セッション文脈(寄り道=アプリ切替)が人間臭さの証拠として出る');
+  ok('C2 法廷exhibit(素人向けHTML+AI対比+技術裏付け+セッション文脈)');
 }
 
 console.log(`\nall ${n} tests passed`);

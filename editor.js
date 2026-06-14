@@ -497,7 +497,7 @@ function buildCourtExhibit(logText, anchorsText, expectedHead, meta = {}) {
   // --- 1パス解析 ---
   let head = lines.length ? (JSON.parse(lines[0]).p ?? '0') : '0', broken = -1;
   const ks = [], states = [], pastes = [];
-  let bs = 0, synth = 0, tMin = null, tMax = null, night = 0;
+  let bs = 0, synth = 0, tMin = null, tMax = null, night = 0, switches = 0;
   for (let i = 0; i < lines.length; i++) {
     let e; try { e = JSON.parse(lines[i]); } catch { if (broken < 0) broken = i; continue; }
     if (broken < 0) { if (e.p !== head) broken = i; else head = sha256hex(head + lines[i]); }
@@ -506,6 +506,7 @@ function buildCourtExhibit(logText, anchorsText, expectedHead, meta = {}) {
     if (e.e === 'k') { ks.push({ t: e.t, bs: e.c === 'Backspace' }); if (e.c === 'Backspace') bs++; if (e.u) synth++; const h = new Date(e.t).getHours(); if (h >= 22 || h < 5) night++; }
     else if (e.e === 'state') { if (!e.d || e.d === curDocId) states.push({ t: e.t, len: e.len }); }
     else if (e.e === 'paste') pastes.push({ t: e.t, len: [...(e.s || '')].length });
+    else if (e.e === 'focus' && e.s === 0) switches++; // 他アプリへ寄り道(離脱)
   }
   const chainOk = broken < 0 && (!expectedHead || head === expectedHead);
   // --- 指標 ---
@@ -595,6 +596,7 @@ th{background:#f6f8fa} .ai{color:#b03030} .me{color:#2a8a4a;font-weight:bold}
 <table>
 <tr><td>考える間(2秒以上の停止)</td><td><span class="num">${C(pauses)}</span> 回 — 推敲・思考の痕跡</td></tr>
 <tr><td>タイポ修正の塊(連続したBackspace)</td><td><span class="num">${C(bursts)}</span> 回 — 打ち間違えて直した</td></tr>
+<tr><td>寄り道(他アプリへ切替)</td><td><span class="num">${C(switches)}</span> 回 — 調べ物・離席など人間的な中断(ボットには無い散らかり)</td></tr>
 <tr><td>推敲(文字数が減って書き直した)</td><td><span class="num">${C(revisions)}</span> 回 — <b>AIの一括生成では起きない、削って練り直す人間の所作</b></td></tr>
 </table>
 
@@ -2579,6 +2581,12 @@ async function main() {
   await initFileMode();
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('keyup', onKeyup);
+  // 真正性 層+(軽い・権限不要): アプリ切替=他アプリへの寄り道をチェーンに記録。
+  // 人間の執筆は寄り道・離席だらけ=人間臭さの証拠。合成入力ボットは"綺麗すぎ"て浮く。
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('blur', () => logEvt('focus', { s: 0 }));  // 他アプリへ離れた
+    window.addEventListener('focus', () => logEvt('focus', { s: 1 })); // 戻ってきた
+  }
   // クリックでカーソル移動(ドラッグ選択は妨げない)。右クリック=選択語の辞書登録
   document.getElementById('text').addEventListener?.('click', (ev) => {
     if (tut || overview || ev.button !== 0) return; // 俯瞰中のカードクリックは専用ハンドラに任せる(確認なしジャンプ)
