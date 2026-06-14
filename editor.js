@@ -1416,7 +1416,9 @@ function predict() {
   return null;
 }
 // ---- ラティス変換: 全分割を最小コスト経路で解く(「助詞の前に名詞」級の判断はここがやる) ----
-const FUNC = new Set(['は','が','を','に','で','と','の','も','へ','や','から','まで','より','だ','です','ます','ました','する','した','して','している','やる','やった','やって','いる','いた','います','ない','なかった','よう','こと','もの','ん','な','ね','よ','か','さ','わ','たち','など','って','ば','たら','なら','けど','でも','し','そう','という','ていう','られ','られる','れる','せる','たり','ながら','のだ','のか','んだ']);
+const FUNC = new Set(['は','が','を','に','で','と','の','も','へ','や','から','まで','より','だ','です','ます','ました','する','した','して','している','やる','やった','やって','いる','いた','います','ない','なかった','よう','こと','もの','ん','な','ね','よ','か','さ','わ','たち','など','って','ば','たら','なら','けど','でも','し','そう','という','ていう','られ','られる','れる','せる','たり','ながら','のだ','のか','んだ',
+  // 副助詞・係助詞など「ふつうかなで書く」語。欠けると珍しい漢字へ過変換する(ほど→程, だけ→炊け 等)
+  'ほど','だけ','くらい','ぐらい','ばかり','しか','こそ','さえ','ずつ','のみ','なんて','なんか','ちゃう','じゃ']);
 // ---- 連接モデル(conn.json)ヘルパ: すべて著者コーパス由来の決定論的統計。LLMは介在しない ----
 const SEP = '\x01'; // conn.json の複合キー区切り(wpos/wbi)
 const DEF_CC = 320; // 未知の品詞遷移のデフォルト接続コスト
@@ -1449,13 +1451,34 @@ function wordCands(sub) {
   const seen = new Set();
   return res.filter(([s2]) => !seen.has(s2) && seen.add(s2));
 }
-function latticeBest(run, K = 8, ctx = '') {
+// con: 区切り制約。3形態を受ける。null→自由ラティス(従来と完全に同一)。
+//   Set(0..n含む)     → 完全分割(exact): その境界に正確に沿う(後方互換)。
+//   {force, forbid}    → partial: force=必ず境界 / forbid=境界にしない / 残りは自由。
+// わかち(LLM/モデル)が「確信した境界だけ」を pin し、残りをラティスに委ねるための口。
+function latticeBest(run, K = 8, ctx = '', con = null) {
   const ch = [...run], n = ch.length;
+  let force = null, forbid = null;
+  if (con instanceof Set) { // 後方互換: 完全分割。内部の非境界は全て forbid に。
+    force = new Set(); forbid = new Set();
+    for (let p = 1; p < n; p++) (con.has(p) ? force : forbid).add(p);
+  } else if (con && (con.force || con.forbid)) {
+    force = con.force instanceof Set ? con.force : new Set(con.force || []);
+    forbid = con.forbid instanceof Set ? con.forbid : new Set(con.forbid || []);
+  }
+  // nextForce[p] = p 以上で最小の force 位置(無ければ n)。セグメントが強制境界をまたぐ判定に O(1)。
+  let nextForce = null;
+  if (force && force.size) {
+    nextForce = new Array(n + 2).fill(n);
+    for (let p = n, nf = n; p >= 0; p--) { if (force.has(p)) nf = p; nextForce[p] = nf; }
+  }
   const dp = [[{ cost: 0, out: '', segs: [], lastKind: '', lastPos: 'BOS', lastSurf: null }]];
   for (let i = 1; i <= n; i++) {
+    if (forbid && i < n && forbid.has(i)) { dp[i] = []; continue; } // ここは境界になれない(セグメントは跨いで通過)
     const acc = [];
     for (let j = Math.max(0, i - 12); j < i; j++) {
       if (!dp[j]?.length) continue;
+      if (nextForce && nextForce[j + 1] < i) continue; // (j,i) 内に強制境界 → このセグメントは不可
+      if (forbid && forbid.has(j) && j !== 0) continue; // 禁止位置からは開始しない(spanは上の dp[j]=[] で担保)
       const sub = ch.slice(j, i).join('');
       const opts = wordCands(sub).map(([s2, c, pos]) => [s2, c, pos, 'w']);
       // かな素通し: 機能語=安い / 著者がかなで書く語=かな率に応じて安い / それ以外=長さに比例して高い
@@ -1466,7 +1489,7 @@ function latticeBest(run, K = 8, ctx = '') {
       opts.push([sub, kc, posOf(sub, sub), 'k']);
       for (const [surf, wc, pos, kind] of opts)
         for (const p of dp[j]) {
-          const pen = kind === 'k' && p.lastKind === 'k' && !FUNC.has(sub) ? 150 : 0; // 素通し連続は軽く罰(機能語の連鎖は正当)
+          const pen = kind === 'k' && p.lastKind === 'k' && !FUNC.has(sub) && !FUNC.has(p.lastSurf) ? 150 : 0; // 素通し連続は軽く罰(機能語の直後のかな語は正当=罰しない)
           const prev = p.out ? p.out.slice(-1) : ctx; // この区間の直前文字(経路依存)
           const cb = prev && ctxDict[prev + '|' + sub]?.[surf] ? 90 : 0; // 同じ文脈で確定した表記は割引
           const cc = p.segs.length ? CC_W * connCost(p.lastPos, pos) : 0; // 品詞bigram接続コスト(先頭辺はバイアスしない)
@@ -1487,6 +1510,31 @@ function latticeBest(run, K = 8, ctx = '') {
   return dp[n] || [];
 }
 // 変換計画(純関数: 状態を変更しない)。henkan と先読み speculation が共用する
+// わかち(区切り)provider: (run, ctxChar) => cuts[] | null。cuts=各セグメント末尾の累積位置(末尾=全長)。
+// LLM/ローカルモデルが分割だけを供給する差し替え口。既定 null=従来の自由ラティス。公理0安全(区切りのみ=読み不変)。
+let wakachiProvider = null;
+globalThis.__neSetWakachi = (fn) => { wakachiProvider = (typeof fn === 'function') ? fn : null; };
+// provider の cuts を検証して allowed 境界集合にする。run を完全分割していなければ(=読み不一致)棄却して null。
+function wakachiAllowed(run, ctxCh) {
+  if (!wakachiProvider) return null;
+  let r;
+  try { r = wakachiProvider(run, ctxCh); } catch { return null; }
+  const n = [...run].length;
+  if (Array.isArray(r)) { // cuts[] → 完全分割(exact)。run を完全分割していなければ棄却(=読み不一致)
+    if (r.length === 0) return null;
+    let prev = 0;
+    for (const c of r) { if (!Number.isInteger(c) || c <= prev || c > n) return null; prev = c; }
+    if (prev !== n) return null;
+    return new Set([0, ...r]);
+  }
+  if (r && (r.force || r.forbid)) { // partial。位置を内部(1..n-1)に検証。読みはラティスが常に保つので安全。
+    const clean = (arr) => new Set((arr || []).filter((p) => Number.isInteger(p) && p > 0 && p < n));
+    const force = clean(r.force), forbid = clean(r.forbid);
+    if (force.size === 0 && forbid.size === 0) return null;
+    return { force, forbid };
+  }
+  return null;
+}
 function planConversion() {
   if (mode !== 'NONE') return null;
   const src = tut ? tut.buf : text;
@@ -1516,7 +1564,11 @@ function planConversion() {
     return { kind: 'word', yomi: pred.reading, removed: pred.S, list: lookup(pred.reading, ctxAt(pred.S.length)), paths: null, symSkip };
   if (exact === run)
     return { kind: 'word', yomi: run, removed: run, list: lookup(run, ctxAt(run.length)), paths: null, symSkip };
-  const paths = latticeBest(run, 8, ctxAt(run.length)).filter((p) => p.segs.some(([y, s2]) => y !== s2));
+  const ctxCh = ctxAt(run.length);
+  const allowed = wakachiAllowed(run, ctxCh); // わかち provider が有効な区切りを返せば制約に使う
+  let paths = latticeBest(run, 8, ctxCh, allowed).filter((p) => p.segs.some(([y, s2]) => y !== s2));
+  if (!paths.length && allowed) // 制約下で変換候補が無い → 自由ラティスにフォールバック(読みは常に保てる)
+    paths = latticeBest(run, 8, ctxCh).filter((p) => p.segs.some(([y, s2]) => y !== s2));
   if (!paths.length) {
     if (exact) return { kind: 'word', yomi: exact, removed: exact, list: lookup(exact, ctxAt(exact.length)), paths: null, symSkip };
     return { kind: 'none', run };
@@ -1540,6 +1592,26 @@ globalThis.__neConv = (yomi, ctx = '') => {
   } finally {
     text = sv.text; cursor = sv.cursor; committedTo = sv.committedTo; mode = sv.mode; tut = sv.tut;
   }
+};
+// 計測専用(read-only): ラティスの top-K 経路を segs 付きで返す。変換挙動には一切影響しない。
+// 失敗分類(分割ミス/漢字ミス/到達不能)のために、可変ビーム幅 K と区切り情報を露出する。
+// 計測専用(read-only): 品詞と接続コストを覗く(過変換/接続バグdebug用)。
+globalThis.__nePos = (yomi, surf) => posOf(yomi, surf);
+globalThis.__neConnCost = (prevPos, pos) => ({ raw: connCost(prevPos, pos), weighted: CC_W * connCost(prevPos, pos) });
+// 計測専用(read-only): あるかな sub の候補とコスト内訳(過変換debug用)。変換挙動に影響なし。
+globalThis.__neCands = (sub) => {
+  const word = wordCands(sub).map(([s2, c, pos]) => ({ s2, c, pos }));
+  let kc;
+  if (FUNC.has(sub)) kc = 60;
+  else if (conn.kana && conn.kana[sub]) kc = Math.max(40, 125 - conn.kana[sub]);
+  else kc = 200 * [...sub].length;
+  return { word, kanaCost: kc, kanaPref: (conn.kana && conn.kana[sub]) || 0, isFunc: FUNC.has(sub) };
+};
+globalThis.__neLat = (yomi, ctx = '', K = 8, con = null) => {
+  let c = null;
+  if (Array.isArray(con)) c = new Set([0, ...con]); // cuts[]=累積境界 → 完全分割(exact)
+  else if (con && (con.force || con.forbid)) c = { force: new Set(con.force || []), forbid: new Set(con.forbid || []) }; // partial
+  return latticeBest(yomi, K, ctx.slice(-1), c).map((p) => ({ out: p.out, segs: p.segs, cost: p.cost }));
 };
 function henkan() {
   if (mode === 'CAND') { snd.cycle(); candIdx = (candIdx + 1) % cands.length; render(); return; }
