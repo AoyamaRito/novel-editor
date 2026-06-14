@@ -1035,9 +1035,16 @@ function saveMemoSoon() {
     else localStorage.setItem('ne:memoText', ta.value);
   }, 800);
 }
+function updateBeginnerBtn() { // チェックボックス表示でON/OFFを一目で
+  const b = document.getElementById('beginnerbtn');
+  if (!b) return;
+  b.textContent = (beginner ? '☑' : '☐') + '初心';
+  if (b.classList) { if (beginner) b.classList.add('on'); else b.classList.remove('on'); }
+}
 function toggleBeginner() {
   beginner = !beginner;
   localStorage.setItem('ne:beginner', beginner ? 'on' : 'off');
+  updateBeginnerBtn();
   followCaret = true;
   render();
 }
@@ -2682,6 +2689,7 @@ async function main() {
   if (ov) ov.onclick = toggleOverview;
   const bg = document.getElementById('beginnerbtn');
   if (bg) bg.onclick = toggleBeginner;
+  updateBeginnerBtn(); // 起動時に保存済み状態をチェック表示へ反映
   document.getElementById('text').addEventListener?.('click', (ev) => {
     if (!overview) return;
     const card = ev.target.closest?.('.ovcard');

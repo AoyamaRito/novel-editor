@@ -74,6 +74,7 @@
   #sidebar { width: 76px; flex: none; display: flex; flex-direction: column; gap: 5px; padding: 10px 6px; border-right: 1px solid #ddd; background: #f4f4f0; font-family: sans-serif; overflow-y: auto; }
   #sidebar button { font-size: 11px; padding: 5px 2px; border: 1px solid #bbb; background: #fff; border-radius: 4px; cursor: pointer; width: 100%; }
   #sidebar button:hover { border-color: var(--accent); color: var(--accent); }
+  #sidebar button.on { background: #1e2f5e; color: #fff; border-color: #1e2f5e; } /* チェックON(初心者モード等) */
   #sidebar select { font-size: 10px; width: 100%; border: 1px solid #bbb; border-radius: 3px; background: #fff; }
   #sidebar hr { border: none; border-top: 1px solid #ddd; margin: 3px 0; }
   #memo-panel { width: 270px; flex: none; display: none; flex-direction: column; border-left: 1px solid #ddd; background: #fbfaf4; }
@@ -181,7 +182,7 @@ body.beginner #chart .key.fnkey .kana{font-size:20px}
       <button id="llm" title="ローカルLLM審査員(2モデル合議)">審…</button>
       <button id="memobtn" title="目次とメモ(メモは作品フォルダの memo.txt。証明の対象外)">目次</button>
       <button id="ovbtn" title="俯瞰: 全話をカードで見渡す(クリックで移動)">俯瞰</button>
-      <button id="beginnerbtn" title="初心者モード: 現在行を大きく1行+配列をデカく(学習用)">初心</button>
+      <button id="beginnerbtn" title="初心者モード: 現在行を大きく1行+配列をデカく(学習用)">☐初心</button>
       <hr>
       <button id="save" title="保存(自動保存もあり)">保存</button>
       <button id="export" title="本文txtを書き出す">書出</button>
