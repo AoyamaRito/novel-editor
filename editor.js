@@ -1286,6 +1286,32 @@ function clickOffset(ev) {
   return found ? Math.min(off, text.length) : null;
 }
 
+// 画面上の点(x,y)に最も近い本文文字のオフセットを返す(data-i 文字を走査。縦書きの列移動用)
+function offsetAtPoint(x, y) {
+  let best = null, bd = Infinity;
+  const els = document.querySelectorAll?.('#text [data-i]') || [];
+  for (const el of els) {
+    if (typeof el.getBoundingClientRect !== 'function') continue;
+    const r = el.getBoundingClientRect();
+    const dx = r.left + r.width / 2 - x, dy = r.top + r.height / 2 - y;
+    const d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = el; }
+  }
+  return best ? Number(best.dataset.i) : null;
+}
+// 縦書きの行(列)移動: screenDir<0=画面左へ(次の列)/ >0=画面右へ(前の列)。
+function moveLineV(screenDir) {
+  const caret = document.querySelector?.('#text .caret');
+  if (!caret || typeof caret.getBoundingClientRect !== 'function' || typeof getComputedStyle !== 'function') {
+    moveCursor(cursor + (screenDir < 0 ? 1 : -1)); return; // 計測不能環境はフォールバック(1文字)
+  }
+  const rc = caret.getBoundingClientRect();
+  const page = caret.closest?.('.pagein') || document.getElementById('text');
+  const fs = parseFloat(getComputedStyle(page).fontSize) || 24;
+  const step = fs * 1.85; // 縦書きの行間=列の送り幅(.pagein の line-height)
+  const p = offsetAtPoint(rc.left + screenDir * step, rc.top + rc.height / 2);
+  if (p != null) moveCursor(p);
+}
 // ---- 変換 ----
 function lookup(yomi, ctx = '') {
   const user = userDict[yomi] || {};
@@ -2151,9 +2177,17 @@ function onKeydown(e) {
     return;
   }
   if (code === 'Escape' && tut) { stopTut(); return; }
-  if (!tut && (code === 'ArrowLeft' || code === 'ArrowRight')) {
+  if (!tut && (code === 'ArrowLeft' || code === 'ArrowRight' || (tategaki && (code === 'ArrowUp' || code === 'ArrowDown')))) {
     e.preventDefault();
-    moveCursor(cursor + (code === 'ArrowLeft' ? -1 : 1));
+    if (tategaki) {
+      // 縦書き: 文字は上→下、列は右→左。上下=文字送り、左右=行(列)移動。
+      if (code === 'ArrowUp') moveCursor(cursor - 1);        // 前の文字(上)
+      else if (code === 'ArrowDown') moveCursor(cursor + 1); // 次の文字(下)
+      else if (code === 'ArrowLeft') moveLineV(-1);          // 次の列(画面左)
+      else moveLineV(1);                                     // ArrowRight=前の列(画面右)
+    } else {
+      moveCursor(cursor + (code === 'ArrowLeft' ? -1 : 1));  // 横書き: 左右=文字送り(従来)
+    }
     return;
   }
   if (code === 'PageUp' || code === 'PageDown') {
@@ -2610,10 +2644,9 @@ async function main() {
     const p = clickOffset(ev);
     if (p == null || p === cursor) return;
     ev.preventDefault();
-    if (!window.confirm('カーソルをここに移動して書きますか?')) return;
+    // 最後の文字以降(本文末)をクリックしたときだけ確認。本文内のクリックは黙ってカーソル移動。
+    if (p >= text.length && !window.confirm('カーソルをここに移動して書きますか?')) return;
     moveCursor(p);
-    const midLine = cursor > 0 && text[cursor - 1] !== '\n' && cursor < text.length && text[cursor] !== '\n';
-    if (midLine && window.confirm('改行を入れてから書きますか?')) { logEvt('ins', { s: '\n' }); out('\n'); }
     render();
   });
   document.getElementById('text').addEventListener?.('contextmenu', (ev) => {
