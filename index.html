@@ -29,35 +29,46 @@
   .candinfo { font-size: 11px; color: #999; font-family: sans-serif; }
   .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: text-bottom; animation: blink 1s step-start infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  #charts { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 24px; justify-content: center; padding: 5px 10px; border: 1px solid #ddd; border-radius: 8px; background: rgba(242,242,238,.93); box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+  #charts { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 16px; justify-content: center; align-items: center; padding: 5px 10px; border: 1px solid #ddd; border-radius: 8px; background: rgba(242,242,238,.93); box-shadow: 0 2px 10px rgba(0,0,0,.08); }
   .chart h3 { font-family: sans-serif; font-size: 11px; color: #777; text-align: center; margin-bottom: 4px; font-weight: normal; }
-  .krow { display: flex; justify-content: center; }
-  .krow:nth-child(2) { margin-left: 14px; }
-  .krow:nth-child(3) { margin-left: 0; }
-  .key { width: 31px; height: 38px; border: 1px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
+  #chart { width: fit-content; margin: 0 auto; }
+  .krow { display: flex; justify-content: flex-start; }
+  /* 実物どおり各段を均等に右へずらす(1段ごとに +0.5キー=17px の一定ステップ) */
+  .krow:nth-child(1) { margin-left: 0; }      /* 数字段   0    */
+  .krow:nth-child(2) { margin-left: 17px; }   /* QWERTY段 +0.5 */
+  .krow:nth-child(3) { margin-left: 34px; }   /* ASDF段   +1.0 */
+  .krow:nth-child(4) { margin-left: 51px; }   /* ZXCV段   +1.5(Shift除外。文字キーだけで均等な対角) */
+  .key { width: 31px; height: 38px; border: 2px solid #ccc; border-radius: 4px; background: #fff; margin: 1.5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
   .key .chord { display: block; font-size: 10px; line-height: 1; opacity: .75; }
   .key .kana { font-size: 13px; line-height: 1; }
   body.shift-held #chart .key .kana { opacity: .18; }
   body.shift-held #chart .key .chord { font-size: 14px; opacity: 1; }
   #chart .key.hint-chord .chord { font-size: 14px; opacity: 1; }
   .key .label { font-size: 7px; color: #aaa; font-family: monospace; position: absolute; bottom: 1px; right: 3px; }
-  .key .gyo-0 { color: #f00000; font-weight: 600; }
-  .key .gyo-1 { color: #ff7070; font-weight: 600; }
-  .key .gyo-2 { color: #00a626; font-weight: 600; }
-  .key .gyo-3 { color: #004d0f; font-weight: 600; }
-  .key .gyo-4 { color: #0066ff; font-weight: 600; }
-  .key .gyo-5 { color: #001f7a; font-weight: 600; }
-  .key .gyo-6 { color: #000000; font-weight: 600; }
-  .key .gyo-7 { color: #8c8c8c; font-weight: 600; }
-  .key .gyo-8 { color: #b400e0; font-weight: 600; }
-  .key .gyo-9 { color: #4b0082; font-weight: 600; }
-  .key .small-kana { color: #9e2b25 !important; font-weight: bold; }
-  .key.home { border: 3px solid #1e2f5e; }
+  /* 文字はすべて黒(指の色分けは枠で表現する) */
+  .key .kana, .key .chord,
+  .key .gyo-0, .key .gyo-1, .key .gyo-2, .key .gyo-3, .key .gyo-4,
+  .key .gyo-5, .key .gyo-6, .key .gyo-7, .key .gyo-8, .key .gyo-9 { color: #000; font-weight: 600; }
+  .key .small-kana { color: #000; font-weight: bold; }
+  /* 指ごとの枠色(列→指。左右の同じ指は同色。人差し指は内側2列ずつ) */
+  .key.f-pinky  { border-color: #d1495b; } /* 小指 */
+  .key.f-ring   { border-color: #e08e3c; } /* 薬指 */
+  .key.f-middle { border-color: #2a9d4a; } /* 中指 */
+  .key.f-index  { border-color: #3a6ea5; } /* 人差し指 */
+  .key.home { border-width: 3px; } /* ホーム段は枠を太く(指色は維持) */
   .key.cross { background: #e3f1e9; border-color: #a7cfba; }
   .key.shiftkey { width: 48px; background: #f4f2ea; }
   .key.shiftkey .kana { color: #888; font-size: 12px; display: block !important; }
   .key.hit { background: var(--accent); border-color: var(--accent); }
   .key.hit .kana, .key.hit .chord { color: #fff; }
+  /* 行さがしボタン(左右): トグルでその行の文字を色反転=場所を探しやすく */
+  .gyobtns { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+  .gyobtn { width: 30px; height: 30px; border: 1.5px solid #bbb; border-radius: 6px; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; cursor: pointer; user-select: none; }
+  .gyobtn:hover { background: #f0f0f0; }
+  .gyobtn.on { background: #1e2f5e; color: #fff; border-color: #1e2f5e; }
+  #chart.g0 .gyo-0, #chart.g1 .gyo-1, #chart.g2 .gyo-2, #chart.g3 .gyo-3, #chart.g4 .gyo-4,
+  #chart.g5 .gyo-5, #chart.g6 .gyo-6, #chart.g7 .gyo-7, #chart.g8 .gyo-8, #chart.g9 .gyo-9 {
+    background: #1e2f5e; color: #fff; border-radius: 3px; padding: 0 3px; }
   footer { display: flex; gap: 16px; padding: 4px 16px; font-family: monospace; font-size: 11px; color: #888; border-top: 1px solid #e5e5e0; }
   #mainrow { flex: 1; display: flex; min-height: 0; }
   #sidebar { width: 76px; flex: none; display: flex; flex-direction: column; gap: 5px; padding: 10px 6px; border-right: 1px solid #ddd; background: #f4f4f0; font-family: sans-serif; overflow-y: auto; }
@@ -193,7 +204,21 @@ body.beginner #chart .key.fnkey .kana{font-size:20px}
     </aside>
   </div>
   <div id="charts">
+    <div class="gyobtns" id="gyo-left">
+      <div class="gyobtn" data-gyo="0">あ</div>
+      <div class="gyobtn" data-gyo="1">か</div>
+      <div class="gyobtn" data-gyo="2">さ</div>
+      <div class="gyobtn" data-gyo="3">た</div>
+      <div class="gyobtn" data-gyo="4">な</div>
+    </div>
     <div class="chart"><div id="chart"></div></div>
+    <div class="gyobtns" id="gyo-right">
+      <div class="gyobtn" data-gyo="5">は</div>
+      <div class="gyobtn" data-gyo="6">ま</div>
+      <div class="gyobtn" data-gyo="7">や</div>
+      <div class="gyobtn" data-gyo="8">ら</div>
+      <div class="gyobtn" data-gyo="9">わ</div>
+    </div>
   </div>
   <footer>
     <span>code: <span id="keycode">─</span></span>

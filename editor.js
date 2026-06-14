@@ -2501,29 +2501,29 @@ function buildCharts(layout) {
     const g = gyoOf(ch);
     return g >= 0 ? `${base} gyo-${g}` : base; // 行ごとに緑系の別色
   };
+  // 列→指(0小指 1薬 2中 3人 4人 / 5人 6人 7中 8薬 9小)。左右の同じ指は同色、人差し指は内側2列ずつ。
+  const FINGER = ['pinky', 'ring', 'middle', 'index', 'index', 'index', 'index', 'middle', 'ring', 'pinky'];
   let html = '<div class="krow numrow">';
-  for (const label of '1234567890') {
+  [...'1234567890'].forEach((label, col) => {
     const ch = charAt(layout.slots, label);
     html += ch
-      ? `<div class="key" data-code="Digit${label}"><span class="${cls(ch, 'kana')}">${ch}</span><span class="label">${label}</span></div>`
+      ? `<div class="key f-${FINGER[col]}" data-code="Digit${label}"><span class="${cls(ch, 'kana')}">${ch}</span><span class="label">${label}</span></div>`
       : '<div class="key spacer"></div>';
-  }
+  });
   html += '</div>';
   for (let r = 0; r < 3; r++) {
     html += '<div class="krow">';
-    if (r === 2) html += '<div class="key shiftkey" data-code="ShiftLeft"><span class="kana">⇧</span><span class="label">Shift</span></div>';
-    for (const label of ROWS[r]) {
+    [...ROWS[r]].forEach((label, col) => {
       const code = CODE_OF[label];
       const top = charAt(layout.slots, label + '+SP');
       const bottom = charAt(layout.slots, label);
-      html += `<div class="key${r === 1 && !'GH'.includes(label) ? ' home' : ''}" data-code="${code}">` +
+      html += `<div class="key f-${FINGER[col]}${r === 1 && !'GH'.includes(label) ? ' home' : ''}" data-code="${code}">` +
         `<span class="${cls(top, 'chord')}">${top}</span>` +
         `<span class="${cls(bottom, 'kana')}">${bottom}</span>` +
         `<span class="label">${label}</span></div>`;
-    }
+    });
     if (r === 0) html += '<div class="key fnkey" data-code="BracketLeft"><span class="kana">@</span><span class="label">ABC</span></div>'; // Pの隣=ABCトグル
     if (r === 1) html += '<div class="key fnkey" data-code="Quote"><span class="kana">：</span><span class="label">開く</span></div>'; // ;の隣=表記を開く
-    if (r === 2) html += '<div class="key shiftkey" data-code="ShiftRight"><span class="kana">⇧</span><span class="label">Shift</span></div>';
     html += '</div>';
   }
   document.getElementById('chart').innerHTML = html;
@@ -2587,6 +2587,15 @@ async function main() {
     window.addEventListener('blur', () => logEvt('focus', { s: 0 }));  // 他アプリへ離れた
     window.addEventListener('focus', () => logEvt('focus', { s: 1 })); // 戻ってきた
   }
+  // 行さがしボタン: トグルでその行(gyo-N)の文字を色反転=配列上の場所を探しやすく(委譲クリック=e2e安全)
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest && e.target.closest('.gyobtn');
+    if (!b) return;
+    const chart = document.getElementById('chart');
+    if (!chart || !chart.classList) return;
+    const on = chart.classList.toggle('g' + b.dataset.gyo);
+    if (b.classList) b.classList.toggle('on', on);
+  });
   // クリックでカーソル移動(ドラッグ選択は妨げない)。右クリック=選択語の辞書登録
   document.getElementById('text').addEventListener?.('click', (ev) => {
     if (tut || overview || ev.button !== 0) return; // 俯瞰中のカードクリックは専用ハンドラに任せる(確認なしジャンプ)
