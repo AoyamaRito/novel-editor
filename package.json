@@ -4,7 +4,8 @@
   "private": true,
   "main": "main.cjs",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node e2e.mjs && node tools/prov-test.cjs"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.1",

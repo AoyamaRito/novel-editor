@@ -6,38 +6,15 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
-// ---- 真正性コア(Phase1): 打鍵チェーンの正本を main が所有する ----
-// (crypto はモジュール下部で require 済み。prov 関数は実行時に参照するため宣言順は問題ない)
-// renderer は生イベントを prov-append で送るだけ。main が受信時刻(rt)を刻み、自分で SHA-256 チェーンを
-// 伸ばして log.jsonl に追記する。renderer はチェーンのハッシュを計算しない=偽造できない。
-// log.jsonl / chainhead.txt への直接書き込み(save/append-file 経由)は塞ぐ(prov-append のみが正規経路)。
-const PROV_FILES = new Set(['log.jsonl', 'chainhead.txt']);
-const provSha = (s) => crypto.createHash('sha256').update(s).digest('hex');
-function provPaths() { const d = path.join(app.getPath('documents'), 'novel-editor'); fs.mkdirSync(d, { recursive: true }); return { log: path.join(d, 'log.jsonl'), head: path.join(d, 'chainhead.txt') }; }
-let provHead = null;
-function provGetHead() {
-  if (provHead !== null) return provHead;
-  const { log, head } = provPaths();
-  try { if (fs.existsSync(head)) { provHead = fs.readFileSync(head, 'utf8').trim() || '0'; return provHead; } } catch {}
-  provHead = '0';
-  try { if (fs.existsSync(log)) for (const line of fs.readFileSync(log, 'utf8').split('\n')) { if (line) provHead = provSha(provHead + line); } } catch {}
-  return provHead;
-}
-ipcMain.handle('prov-append', (e, { events }) => {
-  if (!Array.isArray(events) || !events.length) return { head: provGetHead(), n: 0 };
-  const { log, head } = provPaths();
-  let h = provGetHead(); const rt = Date.now(); const out = [];
-  for (const ev of events) {
-    const { p, rt: _rt, ...rest } = ev; // renderer 由来の p / rt は破棄(main が正本)
-    const body = JSON.stringify({ ...rest, rt, p: h });
-    h = provSha(h + body); out.push(body);
-  }
-  fs.appendFileSync(log, out.join('\n') + '\n', 'utf8');
-  provHead = h;
-  try { fs.writeFileSync(head, h, 'utf8'); } catch {}
-  return { head: h, n: out.length };
-});
-ipcMain.handle('prov-head', () => ({ head: provGetHead() }));
+// ---- 真正性コア(Phase1/4): write側の核は prov.cjs(electron非依存・単独テスト可能・凍結対象のTCB)----
+// renderer は生イベントを prov-append で送るだけ。main(prov.cjs)が受信時刻を刻み、自分で SHA-256
+// チェーンを伸ばして log.jsonl に追記=renderer は偽造できない。log.jsonl/chainhead.txt への
+// 直接書き込み(save/append-file)は isChainFile で塞ぐ(prov-append のみが正規経路)。
+const { makeProvenance, isChainFile } = require('./prov.cjs');
+let prov = null;
+const getProv = () => (prov || (prov = makeProvenance(path.join(app.getPath('documents'), 'novel-editor'))));
+ipcMain.handle('prov-append', (e, { events }) => getProv().append(events));
+ipcMain.handle('prov-head', () => ({ head: getProv().getHead() }));
 
 // 同梱ローカルLLM。審査は2モデルの合議(TinySwallow-1.5B + Qwen3-4B)、採取系は賢い方(model2)
 let llmProc = null, llmProc2 = null;
@@ -74,7 +51,7 @@ function startWhisper() {
 
 // 自動保存先: 書類/novel-editor/(ユーザから見える実ファイル)
 ipcMain.handle('save-file', (e, { name, content }) => {
-  if (PROV_FILES.has(name)) throw new Error('chain files are owned by prov-append'); // 裏口を塞ぐ
+  if (isChainFile(name)) throw new Error('chain files are owned by prov-append'); // 裏口を塞ぐ
   const dir = path.join(app.getPath('documents'), 'novel-editor');
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, name);
@@ -82,7 +59,7 @@ ipcMain.handle('save-file', (e, { name, content }) => {
   return p;
 });
 ipcMain.handle('append-file', (e, { name, content }) => {
-  if (PROV_FILES.has(name)) throw new Error('chain files are owned by prov-append'); // log.jsonl は prov-append のみ
+  if (isChainFile(name)) throw new Error('chain files are owned by prov-append'); // log.jsonl は prov-append のみ
   const dir = path.join(app.getPath('documents'), 'novel-editor');
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, name);
