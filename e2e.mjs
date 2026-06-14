@@ -1150,5 +1150,30 @@ ok('作品の改名(履歴引き継ぎ+チェーン記録)');
   ok('決定論ラティスの連接モデル(LLM非介在で著者文体を再現)');
 }
 
+// ---- 67. 真正性 Phase0: 入力境界(isTrusted検査・合成刻印・証明書開示) ----
+{
+  const s0 = globalThis.__neSynthKeys();
+  down('KeyJ');                       // ev()=plain object=isTrusted無し → 合成
+  assert(globalThis.__neSynthKeys() === s0 + 1, '合成イベント(isTrusted無し)が計上される');
+  down('KeyK', { isTrusted: true });  // ハード由来を模擬
+  assert(globalThis.__neSynthKeys() === s0 + 1, 'isTrusted=true は合成として計上されない');
+  const ks = globalThis.__neLogAll().map((l) => JSON.parse(l)).filter((e) => e.e === 'k');
+  assert(ks.some((e) => e.u === 1), '合成打鍵が u:1 でチェーンに刻印される');
+  const rep = globalThis.__neCert(globalThis.__neLogAll().join('\n'), '', null);
+  assert(rep.includes('⚠ 合成イベント'), '証明書が合成イベントを警告として開示する');
+  ok('真正性Phase0(isTrusted検査・合成刻印・証明書開示)');
+}
+
+// ---- 68. C2 法廷exhibit(素人向けHTML・成長/活動/AI対比・技術裏付け) ----
+{
+  const ex = globalThis.__neExhibit(globalThis.__neLogAll().join('\n'), '', null);
+  assert(ex.startsWith('<!doctype html'), 'exhibit は自己完結HTML');
+  assert(ex.includes('機械生成との対比'), 'AI対比セクションがある');
+  assert(ex.includes('人間の打鍵'), '素人向けの物語(人間の打鍵)が含まれる');
+  assert(ex.includes('<svg'), '可視化(SVG)が含まれる');
+  assert(ex.includes('append-only') && ex.includes('技術的裏付け'), '技術裏付けが専門家用に添えられる');
+  ok('C2 法廷exhibit(素人向けHTML+AI対比+技術裏付け)');
+}
+
 console.log(`\nall ${n} tests passed`);
 process.exit(0);

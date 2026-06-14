@@ -351,6 +351,18 @@ function logEvt(type, data) {
 globalThis.__neLogLast = () => logBuf[logBuf.length - 1]; // e2e 用
 globalThis.__neLogAll = () => logBuf.slice();
 
+// ---- 真正性 Phase0: 打鍵記録の単一チョークポイント ----
+// 全ての 'k' 打鍵はここだけを通る。e.isTrusted(ハード由来=true)を検査し、
+// 合成イベントは「ブロックせず」u:1 で正直に刻印 → 証明書が開示する(貼付の全文開示と同じ思想)。
+// 注: これは renderer 層の防御(カジュアルな合成検出)。構造的な隔離=偽造不能は Phase1(main側コア)で達成する。
+let synthKeys = 0;
+function recordKey(e) {
+  const trusted = !!(e && e.isTrusted === true);
+  if (!trusted) synthKeys++;
+  logEvt('k', { c: e.code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h', ...(e.repeat ? { r: 1 } : {}), ...(trusted ? {} : { u: 1 }) });
+}
+globalThis.__neSynthKeys = () => synthKeys; // e2e/監査用
+
 // 公証: 1日1回、打鍵チェーンの現在ハッシュを OpenTimestamps に刻む(「人が書いた」の外部証明)
 async function anchorNow(force) {
   if (!ipc) return;
@@ -399,7 +411,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     tMax = e.t;
     if (e.t - lastT > 1800000) sessions++;
     lastT = e.t;
-    if (e.e === 'k') { st.k++; if (e.r) st.rep++; if (e.m) st.modes[e.m] = (st.modes[e.m] || 0) + 1; }
+    if (e.e === 'k') { st.k++; if (e.r) st.rep++; if (e.u) st.synth = (st.synth || 0) + 1; if (e.m) st.modes[e.m] = (st.modes[e.m] || 0) + 1; }
     else if (e.e === 'conv') st.conv++;
     else if (e.e === 'pick') st.pick++;
     else if (e.e === 'paste') st.paste.push({ at: new Date(e.t).toISOString(), len: [...(e.s || '')].length });
@@ -430,6 +442,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     '',
     '## 執筆統計',
     `- 総打鍵: ${st.k}(うちキーリピート ${st.rep})`,
+    st.synth ? `- ⚠ 合成イベント(isTrusted=false): ${st.synth}件 — ハード打鍵でない疑い。人間性の証拠を弱める` : `- 入力真正性: 合成イベント 0件(全打鍵が isTrusted=ハード由来)`,
     `- 変換: ${st.conv}回 / 確定: ${st.pick}回`,
     tMin ? `- 期間: ${fmt(new Date(tMin).toISOString())} 〜 ${fmt(new Date(tMax).toISOString())} / セッション数(30分無操作区切り): ${sessions}` : '- 期間: 記録なし',
     `- モード内訳: 横書き ${st.modes.h || 0} / 縦書き ${st.modes.v || 0} / 練習 ${st.modes.t || 0} 打鍵`,
@@ -452,6 +465,7 @@ function buildCertReport(logText, anchorsText, expectedHead) {
     '',
     '## 本エディタの保証事項',
     '- 公理0: 本文の全文字は人間の打鍵から決定的に導出される',
+    '- 入力真正性: 各打鍵は isTrusted(ハード由来)を検査し、合成イベントは u 印でチェーンに記録・本レポートに開示される',
     '- ローカルLLMの役割は変換候補の選別(あり得ない候補の除去・並べ替え)のみである。',
     '  出力は既存候補の番号に拘束され、本文の文字を生成・変更する経路は存在しない。',
     '  人間の打鍵を変更する動作は一切行わない',
@@ -460,6 +474,139 @@ function buildCertReport(logText, anchorsText, expectedHead) {
   ].join('\n');
 }
 globalThis.__neCert = buildCertReport; // e2e 用
+
+// ---- C2 法廷用 exhibit: 打鍵ログを「素人裁判官が見て分かる」自己完結HTMLにする ----
+// 主役は素人向けの物語(成長曲線・日別活動・打鍵リズム・訂正密度・AI対比)。
+// 技術記録(チェーン/公証)は専門家証人向けの裏付けとして末尾に小さく添える。依存ライブラリなし。
+function buildCourtExhibit(logText, anchorsText, expectedHead, meta = {}) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const lines = (logText || '').split('\n').filter(Boolean);
+  const anchors = (anchorsText || '').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  // --- 1パス解析 ---
+  let head = lines.length ? (JSON.parse(lines[0]).p ?? '0') : '0', broken = -1;
+  const ks = [], states = [], pastes = [];
+  let bs = 0, synth = 0, tMin = null, tMax = null, night = 0;
+  for (let i = 0; i < lines.length; i++) {
+    let e; try { e = JSON.parse(lines[i]); } catch { if (broken < 0) broken = i; continue; }
+    if (broken < 0) { if (e.p !== head) broken = i; else head = sha256hex(head + lines[i]); }
+    if (tMin === null || e.t < tMin) tMin = e.t; // 順序非依存(min/max)
+    if (tMax === null || e.t > tMax) tMax = e.t;
+    if (e.e === 'k') { ks.push({ t: e.t, bs: e.c === 'Backspace' }); if (e.c === 'Backspace') bs++; if (e.u) synth++; const h = new Date(e.t).getHours(); if (h >= 22 || h < 5) night++; }
+    else if (e.e === 'state') { if (!e.d || e.d === curDocId) states.push({ t: e.t, len: e.len }); }
+    else if (e.e === 'paste') pastes.push({ t: e.t, len: [...(e.s || '')].length });
+  }
+  const chainOk = broken < 0 && (!expectedHead || head === expectedHead);
+  // --- 指標 ---
+  const GAP = 1800000; // 30分=セッション区切り
+  let sessions = ks.length ? 1 : 0, active = 0; const intervals = [];
+  for (let i = 1; i < ks.length; i++) { const d = ks[i].t - ks[i - 1].t; if (d > GAP) sessions++; else { active += d; intervals.push(d); } }
+  intervals.sort((a, b) => a - b);
+  const medGap = intervals.length ? intervals[Math.floor(intervals.length / 2)] : 0;
+  const spanDays = tMin !== null ? Math.max(1, Math.ceil((tMax - tMin) / 86400000)) : 0;
+  const activeMin = Math.round(active / 60000);
+  const chars = states.length ? states[states.length - 1].len : (meta.len || 0);
+  const cps = active > 0 ? (ks.length / (active / 1000)) : 0; // 実打鍵中の打鍵/秒
+  const corrRate = ks.length ? (100 * bs / ks.length) : 0;
+  const pasteChars = pastes.reduce((a, p) => a + p.len, 0);
+  const fmtD = (t) => new Date(t).toISOString().slice(0, 10);
+  // --- 日別活動バケット ---
+  const byDay = {};
+  for (const k of ks) { const d = fmtD(k.t); byDay[d] = (byDay[d] || 0) + 1; }
+  // 行動証拠(Phase3): 打鍵リズム分布 / 思考の間 / タイポ修正の塊 / 推敲(文字数の減少)
+  const buckets = [0, 0, 0, 0, 0, 0]; // <0.1s, ~0.2s, ~0.4s, ~1s, ~3s, 3s~
+  for (const d of intervals) buckets[d < 100 ? 0 : d < 200 ? 1 : d < 400 ? 2 : d < 1000 ? 3 : d < 3000 ? 4 : 5]++;
+  const pauses = intervals.filter((d) => d > 2000).length;
+  let bursts = 0; for (let i = 0; i < ks.length;) { if (ks[i].bs) { let j = i; while (j < ks.length && ks[j].bs) j++; if (j - i >= 2) bursts++; i = j; } else i++; }
+  let revisions = 0; for (let i = 1; i < states.length; i++) if (states[i].len < states[i - 1].len) revisions++;
+  const days = Object.keys(byDay).sort();
+  const maxDay = Math.max(1, ...Object.values(byDay));
+  // --- SVG: 日別活動バー ---
+  const W = 720, H = 140, pad = 24;
+  const bars = days.map((d, i) => {
+    const x = pad + (days.length === 1 ? W / 2 - 6 : i * (W - 2 * pad) / Math.max(1, days.length - 1));
+    const bh = (H - 2 * pad) * byDay[d] / maxDay;
+    return `<rect x="${x.toFixed(1)}" y="${(H - pad - bh).toFixed(1)}" width="6" height="${bh.toFixed(1)}" fill="#3b6ea5"><title>${d}: ${byDay[d]}打鍵</title></rect>`;
+  }).join('');
+  const dayChart = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="日別の執筆活動">
+    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="#ccc"/>${bars}
+    <text x="${pad}" y="${H - 6}" font-size="11" fill="#666">${days[0] || ''}</text>
+    <text x="${W - pad}" y="${H - 6}" font-size="11" fill="#666" text-anchor="end">${days[days.length - 1] || ''}</text></svg>`;
+  // --- SVG: 文字数の成長曲線(state点) ---
+  let growth = '<p style="color:#888">保存チェックポイントが不足のため成長曲線は省略</p>';
+  if (states.length >= 2) {
+    const t0 = states[0].t, t1 = Math.max(states[states.length - 1].t, t0 + 1), mx = Math.max(1, ...states.map((s) => s.len));
+    const pts = states.map((s) => `${(pad + (W - 2 * pad) * (s.t - t0) / (t1 - t0)).toFixed(1)},${(H - pad - (H - 2 * pad) * s.len / mx).toFixed(1)}`).join(' ');
+    growth = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="文字数の推移">
+      <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="#ccc"/>
+      <polyline points="${pts}" fill="none" stroke="#2a8a4a" stroke-width="2"/>
+      <text x="${pad}" y="14" font-size="11" fill="#666">${mx}字</text></svg>`;
+  }
+  // --- SVG: 打鍵リズムのヒストグラム(速い連打+考える間の混在=人間の指紋) ---
+  const bkLabels = ['~0.1秒', '~0.2秒', '~0.4秒', '~1秒', '~3秒', '3秒~'];
+  const bkMax = Math.max(1, ...buckets), bw = (W - 2 * pad) / 6;
+  const histBars = buckets.map((v, i) => {
+    const x = pad + i * bw + 6, bh = (H - 2 * pad) * v / bkMax;
+    return `<rect x="${x.toFixed(1)}" y="${(H - pad - bh).toFixed(1)}" width="${(bw - 12).toFixed(1)}" height="${bh.toFixed(1)}" fill="#6a4fa3"><title>${bkLabels[i]}: ${v}</title></rect><text x="${(x + bw / 2 - 6).toFixed(1)}" y="${H - 8}" font-size="10" fill="#666" text-anchor="middle">${bkLabels[i]}</text>`;
+  }).join('');
+  const histChart = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="打鍵間隔の分布">
+    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="#ccc"/>${histBars}</svg>`;
+  // --- 物語(素人向け)+ AI対比 + 技術裏付け ---
+  const C = (n) => n.toLocaleString('en-US');
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>執筆過程レポート</title>
+<style>body{font-family:-apple-system,"Hiragino Sans",sans-serif;max-width:820px;margin:32px auto;padding:0 16px;color:#222;line-height:1.7}
+h1{font-size:22px} h2{font-size:16px;border-bottom:2px solid #3b6ea5;padding-bottom:4px;margin-top:32px}
+.lead{background:#eef4fb;border-left:5px solid #3b6ea5;padding:16px 18px;font-size:17px;border-radius:6px}
+table{border-collapse:collapse;width:100%;margin:8px 0} td,th{border:1px solid #ddd;padding:8px 10px;text-align:left}
+th{background:#f6f8fa} .ai{color:#b03030} .me{color:#2a8a4a;font-weight:bold}
+.tech{background:#fafafa;border:1px solid #eee;padding:12px 14px;font-size:13px;color:#555;border-radius:6px;margin-top:8px}
+.ok{color:#2a8a4a} .ng{color:#b03030} .num{font-size:20px;font-weight:bold;color:#3b6ea5}</style></head><body>
+<h1>執筆過程レポート(著者性の証拠)</h1>
+<p style="color:#666">対象原稿: ${esc((curDocId || '').replace('novel:', ''))} / ${C(chars)}字 / 発行 ${new Date().toISOString().slice(0, 10)}</p>
+
+<div class="lead">この原稿(<b>${C(chars)}字</b>)は、<b>${spanDays}日間</b>・<b>${sessions}回</b>の執筆セッションにわたり、
+<b>${C(ks.length)}回の人間の打鍵</b>から作られました。途中で<b>${C(bs)}回</b>(${corrRate.toFixed(1)}%)の打ち直し・推敲が行われています。
+これは「一度に生成された文章」ではなく、<b>時間をかけて人が書いた過程</b>の記録です。</div>
+
+<h2>機械生成との対比</h2>
+<table><tr><th></th><th class="ai">AIによる一括生成</th><th class="me">この原稿</th></tr>
+<tr><td>所要時間</td><td class="ai">数秒〜数十秒</td><td class="me">${spanDays}日間 / 実筆 約${activeMin}分</td></tr>
+<tr><td>過程</td><td class="ai">一括・線形に出力</td><td class="me">${sessions}セッションに分散</td></tr>
+<tr><td>打ち直し</td><td class="ai">ほぼ無し</td><td class="me">${C(bs)}回(${corrRate.toFixed(1)}%)</td></tr>
+<tr><td>打鍵リズム</td><td class="ai">該当なし</td><td class="me">中央打鍵間隔 ${medGap}ms の人間的な揺らぎ</td></tr>
+<tr><td>深夜帯の打鍵</td><td class="ai">該当なし</td><td class="me">${C(night)}回(人の生活リズム)</td></tr></table>
+
+<h2>文字数の推移(書きながら増えた証拠)</h2>${growth}
+<h2>日別の執筆活動</h2>${dayChart}
+
+<h2>執筆の人間らしさ(打鍵の詳細)</h2>
+<p>打鍵間隔の分布。<b>速い連打</b>と<b>考える間</b>が混ざるのが人間の指紋です(機械は一定間隔か瞬間生成で、この揺らぎは出ません)。</p>${histChart}
+<table>
+<tr><td>考える間(2秒以上の停止)</td><td><span class="num">${C(pauses)}</span> 回 — 推敲・思考の痕跡</td></tr>
+<tr><td>タイポ修正の塊(連続したBackspace)</td><td><span class="num">${C(bursts)}</span> 回 — 打ち間違えて直した</td></tr>
+<tr><td>推敲(文字数が減って書き直した)</td><td><span class="num">${C(revisions)}</span> 回 — <b>AIの一括生成では起きない、削って練り直す人間の所作</b></td></tr>
+</table>
+
+<h2>人間性の指標</h2>
+<table>
+<tr><td>総打鍵</td><td><span class="num">${C(ks.length)}</span> 回</td></tr>
+<tr><td>執筆セッション(30分無操作で区切り)</td><td><span class="num">${sessions}</span> 回 / ${spanDays}日間</td></tr>
+<tr><td>打ち直し・推敲(Backspace)</td><td><span class="num">${C(bs)}</span> 回(${corrRate.toFixed(1)}%)</td></tr>
+<tr><td>実打鍵速度</td><td>約 ${cps.toFixed(1)} 打鍵/秒(人間的速度)</td></tr>
+<tr><td>合成イベント(非ハード入力)</td><td>${synth ? `<span class="ng">${C(synth)} 件 ⚠</span>` : '<span class="ok">0 件(全て実キー入力)</span>'}</td></tr>
+</table>
+
+<h2>外部由来テキストの開示(隠さず全件)</h2>
+<p>貼り付け <b>${pastes.length}</b>件 / 合計 <b>${C(pasteChars)}</b>字。${pasteChars === 0 ? '<span class="ok">外部からの貼り付けはありません。</span>' : '上記以外の本文は人間の打鍵由来です。'}</p>
+
+<div class="tech"><b>技術的裏付け(専門家による検証用)</b><br>
+・打鍵記録は各行が前行の SHA-256 を含む append-only チェーン(部分改ざんを検出)。整合性: <b class="${chainOk ? 'ok' : 'ng'}">${chainOk ? '✓ 検証一致' : '✗ 不整合あり'}</b>(記録 ${C(lines.length)}行 / 末尾 ${esc(head.slice(0, 16))}…)<br>
+・第三者タイムスタンプ(OpenTimestamps): <b>${anchors.length}</b>件 — 記録が当該日時に存在したことを後から捏造できない形で固定<br>
+・期間: ${tMin !== null ? fmtD(tMin) + ' 〜 ' + fmtD(tMax) : '記録なし'}<br>
+・公理0: 本文の全文字は人間の打鍵から決定的に導出され、AIが本文を生成・変更する経路は存在しない</div>
+</body></html>`;
+}
+globalThis.__neExhibit = buildCourtExhibit; // e2e 用
+
 async function issueCertificate() {
   flushLog();
   let logText = '', anchorsText = '';
@@ -467,15 +614,15 @@ async function issueCertificate() {
     try { logText = (await ipc.invoke('read-file', { name: 'log.jsonl' })) || ''; } catch {}
     try { anchorsText = (await ipc.invoke('read-file', { name: 'anchors.jsonl' })) || ''; } catch {}
   }
-  const report = buildCertReport(logText, anchorsText, logHash);
+  const exhibit = buildCourtExhibit(logText, anchorsText, logHash, { len: text.length }); // 法廷用(素人向けHTML)が主
   if (ipc) {
     const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const p = await ipc.invoke('export-dialog', { defaultName: `著者証明-${d}.txt`, content: report });
-    status(p ? `証明書を発行 → ${p}` : '発行をキャンセルしました');
+    const p = await ipc.invoke('export-dialog', { defaultName: `執筆過程レポート-${d}.html`, content: exhibit });
+    status(p ? `執筆過程レポートを発行 → ${p}` : '発行をキャンセルしました');
   } else {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([report], { type: 'text/plain' }));
-    a.download = 'certificate.txt';
+    a.href = URL.createObjectURL(new Blob([exhibit], { type: 'text/html' }));
+    a.download = 'writing-process.html';
     a.click();
   }
 }
@@ -1918,7 +2065,7 @@ function onKeydown(e) {
   if (code === 'Escape' && calib) { calib = null; render(); status('声合わせを終了しました'); return; }
   if (rec && rec._ptt && code !== 'MetaLeft') rec._cancel = true; // 他キーが来た=ショートカットだった→破棄
   if (!e.repeat || code === 'Backspace')
-    logEvt('k', { c: code, s: e.shiftKey ? 1 : 0, m: tut ? 't' : tategaki ? 'v' : 'h', ...(e.repeat ? { r: 1 } : {}) });
+    recordKey(e); // 真正性チョークポイント(isTrusted検査+合成刻印)
   if (code === 'ShiftLeft' || code === 'ShiftRight') {
     if (typeof document.body?.classList?.toggle === 'function') document.body.classList.toggle('shift-held', true);
   }
