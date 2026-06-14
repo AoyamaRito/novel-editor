@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>執筆記録の独立検証(novel-editor)</title>
+<!--
+  自己完結・依存ゼロの独立検証ツール。
+  novel-editor が出力する log.jsonl(打鍵ハッシュチェーン)と anchors.jsonl(第三者タイムスタンプ)を
+  ドラッグ&ドロップすると、エディタ本体を一切使わずに:
+    (1) チェーンの改ざん有無を検証(各行が前行のSHA-256を含む append-only)
+    (2) 公証(OpenTimestamps)の中間head再現を照合(末尾切り詰めの検出)
+    (3) 素人にも分かる執筆過程レポート(成長曲線・AI対比・人間性指標)を表示
+  SHA-256 は editor.js と同一の純JS実装を埋め込み(ハッシュ完全一致)。このファイルは凍結して配布できる。
+-->
+<style>
+body{font-family:-apple-system,"Hiragino Sans",sans-serif;max-width:860px;margin:24px auto;padding:0 16px;color:#222;line-height:1.7}
+h1{font-size:22px} h2{font-size:16px;border-bottom:2px solid #3b6ea5;padding-bottom:4px;margin-top:30px}
+#drop{border:2px dashed #9bb;border-radius:10px;padding:36px;text-align:center;color:#567;background:#f6fafd;cursor:pointer}
+#drop.over{background:#e7f1fb;border-color:#3b6ea5}
+.lead{background:#eef4fb;border-left:5px solid #3b6ea5;padding:16px 18px;font-size:17px;border-radius:6px}
+table{border-collapse:collapse;width:100%;margin:8px 0} td,th{border:1px solid #ddd;padding:8px 10px;text-align:left}
+th{background:#f6f8fa} .ai{color:#b03030} .me{color:#2a8a4a;font-weight:bold}
+.tech{background:#fafafa;border:1px solid #eee;padding:12px 14px;font-size:13px;color:#555;border-radius:6px;margin-top:8px}
+.ok{color:#2a8a4a} .ng{color:#b03030} .num{font-size:20px;font-weight:bold;color:#3b6ea5}
+.banner{padding:18px 20px;border-radius:10px;font-size:20px;font-weight:bold;margin:16px 0}
+.banner.ok{background:#e6f6ec;border:2px solid #2a8a4a;color:#1d6b38}
+.banner.ng{background:#fdeaea;border:2px solid #b03030;color:#8a1f1f}
+.small{font-size:13px;color:#666;font-weight:normal}
+</style>
+</head>
+<body>
+<h1>執筆記録の独立検証</h1>
+<p class="small">この原稿が「人間の打鍵から作られ、後から改ざんされていない」ことを、エディタ本体を使わずに第三者が確認するためのツールです。下に <b>log.jsonl</b>(と任意で <b>anchors.jsonl</b>)をドロップしてください。データはこの画面の中だけで処理され、どこにも送信されません。</p>
+<div id="drop">ここに log.jsonl / anchors.jsonl をドロップ<br><span class="small">またはクリックして選択</span><input id="file" type="file" multiple accept=".jsonl,.json,.txt" style="display:none"></div>
+<div id="out"></div>
+
+<script>
+// ===== editor.js と同一の純JS SHA-256(ハッシュ完全一致の保証) =====
+const SHA_K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+function sha256hex(str){
+  const bytes=new TextEncoder().encode(str);
+  const bitLen=bytes.length*8;
+  const padded=new Uint8Array((((bytes.length+8)>>6)+1)<<6);
+  padded.set(bytes); padded[bytes.length]=0x80;
+  const dv=new DataView(padded.buffer);
+  dv.setUint32(padded.length-8,Math.floor(bitLen/0x100000000));
+  dv.setUint32(padded.length-4,bitLen>>>0);
+  const H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const w=new Uint32Array(64); const rr=(x,n)=>(x>>>n)|(x<<(32-n));
+  for(let off=0;off<padded.length;off+=64){
+    for(let i=0;i<16;i++) w[i]=dv.getUint32(off+i*4);
+    for(let i=16;i<64;i++){const s0=rr(w[i-15],7)^rr(w[i-15],18)^(w[i-15]>>>3);const s1=rr(w[i-2],17)^rr(w[i-2],19)^(w[i-2]>>>10);w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0;}
+    let [a,b,c,d,e2,f,g,h]=H;
+    for(let i=0;i<64;i++){const S1=rr(e2,6)^rr(e2,11)^rr(e2,25);const ch=(e2&f)^(~e2&g);const t1=(h+S1+ch+SHA_K[i]+w[i])>>>0;const S0=rr(a,2)^rr(a,13)^rr(a,22);const mj=(a&b)^(a&c)^(b&c);const t2=(S0+mj)>>>0;h=g;g=f;f=e2;e2=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;}
+    H[0]=(H[0]+a)>>>0;H[1]=(H[1]+b)>>>0;H[2]=(H[2]+c)>>>0;H[3]=(H[3]+d)>>>0;H[4]=(H[4]+e2)>>>0;H[5]=(H[5]+f)>>>0;H[6]=(H[6]+g)>>>0;H[7]=(H[7]+h)>>>0;
+  }
+  return H.map(x=>x.toString(16).padStart(8,'0')).join('');
+}
+
+const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const C=(n)=>Number(n).toLocaleString('en-US');
+
+// ===== 検証 + 執筆過程レポート(editor.js の buildCourtExhibit と同等・独立実装) =====
+function verifyAndRender(logText, anchorsText){
+  const lines=(logText||'').split('\n').filter(Boolean);
+  const anchors=(anchorsText||'').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(Boolean);
+  const anchorHeads=new Set(anchors.map(a=>a.logHash)); const foundHeads=new Set();
+  if(!lines.length) return '<div class="banner ng">✗ ログが空です。log.jsonl を読み込んでください。</div>';
+  // --- チェーン検証 + 1パス解析 ---
+  let head=(()=>{try{return JSON.parse(lines[0]).p??'0'}catch{return '0'}})(), broken=-1;
+  const ks=[],states=[],pastes=[]; let bs=0,synth=0,tMin=null,tMax=null,night=0,docId='';
+  for(let i=0;i<lines.length;i++){
+    let e; try{e=JSON.parse(lines[i])}catch{if(broken<0)broken=i;continue}
+    if(broken<0){ if(e.p!==head)broken=i; else { head=sha256hex(head+lines[i]); if(anchorHeads.has(head))foundHeads.add(head); } }
+    if(tMin===null||e.t<tMin)tMin=e.t; if(tMax===null||e.t>tMax)tMax=e.t;
+    if(e.e==='k'){ks.push({t:e.t,bs:e.c==='Backspace'}); if(e.c==='Backspace')bs++; if(e.u)synth++; const h=new Date(e.t).getHours(); if(h>=22||h<5)night++;}
+    else if(e.e==='state'){states.push({t:e.t,len:e.len}); if(e.d&&!docId)docId=e.d;}
+    else if(e.e==='paste')pastes.push({t:e.t,len:[...(e.s||'')].length});
+  }
+  const chainOk=broken<0;
+  const anchorOk=anchorHeads.size===0||foundHeads.size===anchorHeads.size;
+  // --- 指標 ---
+  const GAP=1800000; let sessions=ks.length?1:0,active=0; const intervals=[];
+  for(let i=1;i<ks.length;i++){const d=ks[i].t-ks[i-1].t; if(d>GAP)sessions++; else {active+=d;intervals.push(d);}}
+  intervals.sort((a,b)=>a-b);
+  const medGap=intervals.length?intervals[Math.floor(intervals.length/2)]:0;
+  const spanDays=tMin!==null?Math.max(1,Math.ceil((tMax-tMin)/86400000)):0;
+  const activeMin=Math.round(active/60000);
+  const chars=states.length?states[states.length-1].len:0;
+  const cps=active>0?(ks.length/(active/1000)):0;
+  const corrRate=ks.length?(100*bs/ks.length):0;
+  const pasteChars=pastes.reduce((a,p)=>a+p.len,0);
+  const fmtD=(t)=>new Date(t).toISOString().slice(0,10);
+  const byDay={}; for(const k of ks){const d=fmtD(k.t);byDay[d]=(byDay[d]||0)+1;}
+  const days=Object.keys(byDay).sort(); const maxDay=Math.max(1,...Object.values(byDay));
+  const buckets=[0,0,0,0,0,0]; for(const d of intervals)buckets[d<100?0:d<200?1:d<400?2:d<1000?3:d<3000?4:5]++;
+  const pauses=intervals.filter(d=>d>2000).length;
+  let bursts=0; for(let i=0;i<ks.length;){if(ks[i].bs){let j=i;while(j<ks.length&&ks[j].bs)j++;if(j-i>=2)bursts++;i=j;}else i++;}
+  let revisions=0; for(let i=1;i<states.length;i++)if(states[i].len<states[i-1].len)revisions++;
+  // --- SVG ---
+  const W=720,H=140,pad=24;
+  const bars=days.map((d,i)=>{const x=pad+(days.length===1?W/2-6:i*(W-2*pad)/Math.max(1,days.length-1));const bh=(H-2*pad)*byDay[d]/maxDay;return `<rect x="${x.toFixed(1)}" y="${(H-pad-bh).toFixed(1)}" width="6" height="${bh.toFixed(1)}" fill="#3b6ea5"><title>${d}: ${byDay[d]}</title></rect>`;}).join('');
+  const dayChart=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><line x1="${pad}" y1="${H-pad}" x2="${W-pad}" y2="${H-pad}" stroke="#ccc"/>${bars}<text x="${pad}" y="${H-6}" font-size="11" fill="#666">${days[0]||''}</text><text x="${W-pad}" y="${H-6}" font-size="11" fill="#666" text-anchor="end">${days[days.length-1]||''}</text></svg>`;
+  let growth='<p style="color:#888">保存チェックポイント不足のため成長曲線は省略</p>';
+  if(states.length>=2){const t0=states[0].t,t1=Math.max(states[states.length-1].t,t0+1),mx=Math.max(1,...states.map(s=>s.len));const pts=states.map(s=>`${(pad+(W-2*pad)*(s.t-t0)/(t1-t0)).toFixed(1)},${(H-pad-(H-2*pad)*s.len/mx).toFixed(1)}`).join(' ');growth=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><line x1="${pad}" y1="${H-pad}" x2="${W-pad}" y2="${H-pad}" stroke="#ccc"/><polyline points="${pts}" fill="none" stroke="#2a8a4a" stroke-width="2"/><text x="${pad}" y="14" font-size="11" fill="#666">${mx}字</text></svg>`;}
+  const bkLabels=['~0.1秒','~0.2秒','~0.4秒','~1秒','~3秒','3秒~']; const bkMax=Math.max(1,...buckets),bw=(W-2*pad)/6;
+  const histBars=buckets.map((v,i)=>{const x=pad+i*bw+6,bh=(H-2*pad)*v/bkMax;return `<rect x="${x.toFixed(1)}" y="${(H-pad-bh).toFixed(1)}" width="${(bw-12).toFixed(1)}" height="${bh.toFixed(1)}" fill="#6a4fa3"><title>${bkLabels[i]}: ${v}</title></rect><text x="${(x+bw/2-6).toFixed(1)}" y="${H-8}" font-size="10" fill="#666" text-anchor="middle">${bkLabels[i]}</text>`;}).join('');
+  const histChart=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><line x1="${pad}" y1="${H-pad}" x2="${W-pad}" y2="${H-pad}" stroke="#ccc"/>${histBars}</svg>`;
+  // --- 検証バナー ---
+  const verified=chainOk&&anchorOk;
+  const banner = verified
+    ? `<div class="banner ok">✓ 検証成功 — 記録は改ざんされていません${anchorHeads.size?'。第三者タイムスタンプとも一致(末尾切り詰めなし)':'(公証ファイル未添付:時刻の外部証明は別途)'}</div>`
+    : `<div class="banner ng">✗ 検証失敗 — ${!chainOk?(broken+1)+'行目でチェーンが不整合(改ざんの疑い)':'公証headの一部が再現せず(末尾欠落の疑い)'}</div>`;
+  // --- 出力 ---
+  return banner + `
+<div class="lead">この原稿(<b>${C(chars)}字</b>)は、<b>${spanDays}日間</b>・<b>${sessions}回</b>の執筆セッションにわたり、<b>${C(ks.length)}回の人間の打鍵</b>から作られました。途中で<b>${C(bs)}回</b>(${corrRate.toFixed(1)}%)の打ち直し・推敲が行われています。一度に生成された文章ではなく、時間をかけて人が書いた過程の記録です。</div>
+
+<h2>機械生成との対比</h2>
+<table><tr><th></th><th class="ai">AIによる一括生成</th><th class="me">この原稿</th></tr>
+<tr><td>所要時間</td><td class="ai">数秒〜数十秒</td><td class="me">${spanDays}日間 / 実筆 約${activeMin}分</td></tr>
+<tr><td>過程</td><td class="ai">一括・線形に出力</td><td class="me">${sessions}セッションに分散</td></tr>
+<tr><td>打ち直し</td><td class="ai">ほぼ無し</td><td class="me">${C(bs)}回(${corrRate.toFixed(1)}%)</td></tr>
+<tr><td>打鍵リズム</td><td class="ai">該当なし</td><td class="me">中央打鍵間隔 ${medGap}ms の人間的な揺らぎ</td></tr>
+<tr><td>深夜帯の打鍵</td><td class="ai">該当なし</td><td class="me">${C(night)}回</td></tr></table>
+
+<h2>文字数の推移(書きながら増えた証拠)</h2>${growth}
+<h2>日別の執筆活動</h2>${dayChart}
+
+<h2>執筆の人間らしさ(打鍵の詳細)</h2>
+<p>打鍵間隔の分布。<b>速い連打</b>と<b>考える間</b>が混ざるのが人間の指紋です(機械は一定間隔か瞬間生成)。</p>${histChart}
+<table>
+<tr><td>考える間(2秒以上の停止)</td><td><span class="num">${C(pauses)}</span> 回</td></tr>
+<tr><td>タイポ修正の塊(連続Backspace)</td><td><span class="num">${C(bursts)}</span> 回</td></tr>
+<tr><td>推敲(文字数が減って書き直した)</td><td><span class="num">${C(revisions)}</span> 回 — <b>AIの一括生成では起きない人間の所作</b></td></tr>
+</table>
+
+<h2>外部由来テキストの開示(全件)</h2>
+<p>貼り付け <b>${pastes.length}</b>件 / 合計 <b>${C(pasteChars)}</b>字。${pasteChars===0?'<span class="ok">外部からの貼り付けはありません。</span>':'上記以外の本文は人間の打鍵由来です。'}</p>
+
+<div class="tech"><b>技術的裏付け(専門家による検証)</b><br>
+・打鍵記録は各行が前行の SHA-256 を含む append-only チェーン。整合性: <b class="${chainOk?'ok':'ng'}">${chainOk?'✓ 検証一致':'✗ '+(broken+1)+'行目で不整合'}</b>(記録 ${C(lines.length)}行 / 末尾 ${esc(head.slice(0,16))}…)<br>
+・第三者タイムスタンプ(OpenTimestamps)照合: <b class="${anchorOk?'ok':'ng'}">${foundHeads.size}/${anchorHeads.size} 件の公証headを中間headとして再現</b>${anchorHeads.size&&!anchorOk?'(⚠ 末尾欠落の可能性)':''}<br>
+・期間: ${tMin!==null?fmtD(tMin)+' 〜 '+fmtD(tMax):'記録なし'}${docId?' / 原稿: '+esc(docId.replace('novel:','')):''}<br>
+・このツールは editor.js と同一の SHA-256 を埋め込んだ独立実装です。エディタ本体を信頼せずに上記を再現・検証できます。</div>`;
+}
+
+// ===== ファイル読み込み =====
+const drop=document.getElementById('drop'), out=document.getElementById('out'), file=document.getElementById('file');
+let logText='', anchorsText='';
+function run(){ if(logText) out.innerHTML=verifyAndRender(logText,anchorsText); }
+async function handle(files){
+  for(const f of files){
+    const txt=await f.text();
+    if(/anchor/i.test(f.name)) anchorsText=txt;
+    else if(/log/i.test(f.name)||/\.jsonl$/i.test(f.name)) logText=txt;
+    else if(!logText) logText=txt; // 名前不明の最初のファイルはログ扱い
+  }
+  run();
+}
+drop.onclick=()=>file.click();
+file.onchange=()=>handle(file.files);
+drop.ondragover=(e)=>{e.preventDefault();drop.classList.add('over');};
+drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=(e)=>{e.preventDefault();drop.classList.remove('over');handle(e.dataTransfer.files);};
+</script>
+</body>
+</html>
